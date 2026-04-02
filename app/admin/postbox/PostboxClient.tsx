@@ -28,6 +28,7 @@ const POSTBOX_COL_RESIZE_LABELS = [
 ] as const;
 import { usePostboxChangeSignal } from "./hooks/usePostboxChangeSignal";
 import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
+import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -264,6 +265,9 @@ export function PostboxClient() {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
+      <AdminGlobalLoadingOverlay
+        message={loading && !fetchError ? "데이터 불러오는 중…" : null}
+      />
       <div style={{ padding: "19px 0 40px", width: "100%" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 20 }}>
@@ -317,10 +321,11 @@ export function PostboxClient() {
           <button
             type="button"
             onClick={() => { void fetchPosts(); }}
+            disabled={loading}
             title="새로고침"
             style={{
               width: 34, height: 34, borderRadius: 8, border: "1px solid #e2e8f0",
-              background: "#f8fafc", color: "#64748b", cursor: "pointer",
+              background: "#f8fafc", color: loading ? "#cbd5e1" : "#64748b", cursor: loading ? "wait" : "pointer",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
@@ -369,12 +374,7 @@ export function PostboxClient() {
             })}
           </div>
 
-          {/* Loading / error */}
-          {loading && (
-            <div style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
-              불러오는 중…
-            </div>
-          )}
+          {/* Error (로딩은 차트 관리와 동일 전역 오버레이) */}
           {!loading && fetchError && (
             <div style={{ padding: "40px 0", textAlign: "center", color: "#ef4444", fontSize: 14 }}>
               {fetchError}

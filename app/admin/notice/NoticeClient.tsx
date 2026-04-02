@@ -8,6 +8,7 @@ import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { signalNoticeChange } from "@/lib/firestore-notice-signal";
 import { NoticeCreateModal } from "./components/NoticeCreateModal";
 import { useNoticeChangeSignal } from "./hooks/useNoticeChangeSignal";
+import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import {
   ADMIN_NOTICE_LIST_COL_DEFAULTS,
   ADMIN_NOTICE_LIST_COL_MINS,
@@ -256,6 +257,9 @@ export function NoticeClient() {
 
   return (
     <>
+      <AdminGlobalLoadingOverlay
+        message={loading && !fetchError ? "데이터 불러오는 중…" : null}
+      />
       <div style={{ padding: "19px 0 40px", width: "100%" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 20 }}>
           <div style={{ flex: 1 }}>
@@ -342,6 +346,7 @@ export function NoticeClient() {
           <button
             type="button"
             onClick={() => { void fetchNotices(); }}
+            disabled={loading}
             title="새로고침"
             style={{
               width: 34,
@@ -349,8 +354,8 @@ export function NoticeClient() {
               borderRadius: 8,
               border: "1px solid #e2e8f0",
               background: "#f8fafc",
-              color: "#64748b",
-              cursor: "pointer",
+              color: loading ? "#cbd5e1" : "#64748b",
+              cursor: loading ? "wait" : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -385,11 +390,6 @@ export function NoticeClient() {
             <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>공지</div>
           </div>
 
-          {loading && (
-            <div style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
-              불러오는 중…
-            </div>
-          )}
           {!loading && fetchError && (
             <div style={{ padding: "40px 0", textAlign: "center", color: "#ef4444", fontSize: 14 }}>
               {fetchError}
