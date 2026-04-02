@@ -1,0 +1,1 @@
+// 루트 firestore.rules 에 반영됨. `match /signals/{signalId}` 로 chart·postbox 등 공통 허용.
