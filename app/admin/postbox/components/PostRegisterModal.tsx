@@ -17,6 +17,7 @@ import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
 import { useChartChangeSignal } from "@/app/admin/spec/hooks/useChartChangeSignal";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
+import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 
 const MAX_RECIPIENTS = 100;
@@ -979,6 +980,8 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
   // 보상 아이템
   const [rewards, setRewards] = useState<RewardItem[]>([]);
   const [postboxCharts, setPostboxCharts] = useState<PostboxChart[]>([]);
+  /** 차트 후보 API 조회 중 — 스펙 화면과 동일 `AdminGlobalLoadingOverlay` */
+  const [postboxChartsLoading, setPostboxChartsLoading] = useState(true);
   const [showChartPicker, setShowChartPicker] = useState(false);
   const [itemKeyPickerTarget, setItemKeyPickerTarget] = useState<PostboxChart | null>(null);
   /** 보상 행 클릭 시 상세 내역 모달 */
@@ -987,14 +990,21 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
   const { bootstrapped } = useAdminSession();
 
   const loadPostboxCharts = useCallback(async () => {
+    setPostboxChartsLoading(true);
     try {
       const res = await authFetch("/api/storage/chart-postbox-flags");
       const data = await res.json() as { ok: boolean; charts?: PostboxChart[] };
       if (data.ok && Array.isArray(data.charts)) {
         const onlyItem = data.charts.filter(isPostboxItemChartPayload);
         setPostboxCharts(onlyItem.map((c) => normalizePostboxChart(c)));
+      } else {
+        setPostboxCharts([]);
       }
-    } catch { /* 무시 */ }
+    } catch {
+      setPostboxCharts([]);
+    } finally {
+      setPostboxChartsLoading(false);
+    }
   }, []);
 
   // 차트 목록 — 서버에서 인벤토리와 크로스체크된 목록. `signals/chart`로 원격 변경 동기화
@@ -1132,6 +1142,9 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
       }}
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
+      <AdminGlobalLoadingOverlay
+        message={postboxChartsLoading ? "데이터 불러오는 중…" : null}
+      />
       {comingSoonPtr ? (
         <div
           role="tooltip"
@@ -1445,7 +1458,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
             <button
               type="button"
               onClick={() => setShowChartPicker(true)}
-              disabled={postboxCharts.length === 0}
+              disabled={postboxChartsLoading || postboxCharts.length === 0}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1453,15 +1466,19 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
                 padding: "7px 14px",
                 borderRadius: 8,
                 border: "1.5px dashed #cbd5e1",
-                background: postboxCharts.length === 0 ? "#f8fafc" : "#fff",
-                color: postboxCharts.length === 0 ? "#94a3b8" : "#374151",
+                background: postboxChartsLoading || postboxCharts.length === 0 ? "#f8fafc" : "#fff",
+                color: postboxChartsLoading || postboxCharts.length === 0 ? "#94a3b8" : "#374151",
                 fontWeight: 600,
                 fontSize: 13,
-                cursor: postboxCharts.length === 0 ? "default" : "pointer",
+                cursor: postboxChartsLoading || postboxCharts.length === 0 ? "wait" : "pointer",
               }}
             >
               <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
-              {postboxCharts.length === 0 ? "item.csv / item{n}.csv 없음" : "아이템 추가"}
+              {postboxChartsLoading
+                ? "불러오는 중…"
+                : postboxCharts.length === 0
+                  ? "item.csv / item{n}.csv 없음"
+                  : "아이템 추가"}
             </button>
           </FormRow>
 
