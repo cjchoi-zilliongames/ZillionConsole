@@ -17,6 +17,7 @@ import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
 import { useChartChangeSignal } from "@/app/admin/spec/hooks/useChartChangeSignal";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
+import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 
 const MAX_RECIPIENTS = 100;
 
@@ -451,7 +452,7 @@ function ChartPickerModal({
             autoComplete="off"
           />
           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 5 }}>
-            우편 기능이 활성화된 차트만 표시됩니다 ({charts.length}개)
+            차트명이 item인 CSV만 표시됩니다 ({charts.length}개)
           </div>
         </div>
 
@@ -459,8 +460,10 @@ function ChartPickerModal({
         <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid #f1f5f9" }}>
           {charts.length === 0 && (
             <div style={{ padding: "32px 0", textAlign: "center", fontSize: 13, color: "#94a3b8" }}>
-              우편 기능이 활성화된 차트가 없습니다.<br />
-              <span style={{ fontSize: 11 }}>차트 관리에서 우편 기능을 활성화하세요.</span>
+              차트명 item CSV가 없습니다.<br />
+              <span style={{ fontSize: 11 }}>
+                스펙 폴더에 item.csv / item{"{n}"}.csv 형태 파일이 있는지 확인하세요.
+              </span>
             </div>
           )}
           {charts.length > 0 && filtered.length === 0 && (
@@ -987,8 +990,9 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
     try {
       const res = await authFetch("/api/storage/chart-postbox-flags");
       const data = await res.json() as { ok: boolean; charts?: PostboxChart[] };
-      if (data.ok && data.charts) {
-        setPostboxCharts(data.charts.map((c) => normalizePostboxChart(c)));
+      if (data.ok && Array.isArray(data.charts)) {
+        const onlyItem = data.charts.filter(isPostboxItemChartPayload);
+        setPostboxCharts(onlyItem.map((c) => normalizePostboxChart(c)));
       }
     } catch { /* 무시 */ }
   }, []);

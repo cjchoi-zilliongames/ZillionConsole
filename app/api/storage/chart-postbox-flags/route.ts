@@ -5,26 +5,12 @@ import { getSpecBucket } from "@/lib/firebase-admin";
 import { listAllSpecCsvFiles } from "@/lib/storage/spec-inventory";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
+import {
+  isPostboxItemSpecFile,
+  logicalChartStemForPostbox,
+} from "@/lib/spec/postbox-item-chart";
 
 export const runtime = "nodejs";
-
-/**
- * `.csv` 제거 후 끝의 `{버전}` 도 제거한 **논리 차트명** (우편 item 판별용).
- * 예: `item{7}.csv` → `item`, `item.csv` → `item`
- */
-export function logicalChartStemForPostbox(name: string): string {
-  const noExt = name.replace(/\.csv$/i, "").trim();
-  return noExt.replace(/\{\d+\}$/, "").trim();
-}
-
-/**
- * 우편 보상 후보: 논리 차트명이 정확히 `item` 인 것만 (`itemA`, `items` 제외).
- * `displayName` / `fileName` 둘 중 하나라도 맞으면 포함(버전 `{}` 는 비교에서 생략).
- */
-export function isPostboxItemChartFile(f: { displayName: string; fileName: string }): boolean {
-  const ok = (s: string) => logicalChartStemForPostbox(s).toLowerCase() === "item";
-  return ok(f.displayName) || ok(f.fileName);
-}
 
 async function readRoutes(): Promise<Record<string, string>> {
   try {
@@ -42,7 +28,7 @@ function chartListMeta(
   prefixToVersion: Record<string, string>,
 ): { chartLabel: string; appVersion: string; chartName: string; tableName: string } {
   const appVersion = prefixToVersion[file.folder] || file.folder.replace(/\/$/, "") || file.folder;
-  const chartName = file.displayName.replace(/\.csv$/i, "");
+  const chartName = logicalChartStemForPostbox(file.displayName);
   return {
     chartLabel: `${appVersion} / ${chartName}`,
     appVersion,
@@ -81,7 +67,7 @@ export async function GET(req: Request) {
     }
 
     const charts: PostboxChartInfo[] = allFiles
-      .filter((f) => isPostboxItemChartFile(f))
+      .filter((f) => isPostboxItemSpecFile(f))
       .map((f) => {
         const m = chartListMeta(f, prefixToVersion);
         return {
