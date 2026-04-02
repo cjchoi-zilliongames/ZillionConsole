@@ -22,6 +22,9 @@ import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 
 const MAX_RECIPIENTS = 100;
 
+/** 우편 목록·차트 관리와 동일 (AdminGlobalLoadingOverlay 문구) */
+const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type ExpiryPreset = "1" | "7" | "15" | "30" | "custom";
@@ -661,7 +664,7 @@ function ItemKeyPickerModal({
         <div style={{ overflow: "auto", flex: 1, minHeight: "min(calc(48vh * 1.2), 624px)" }}>
           {loading && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 336, height: "100%", gap: 12, color: "#6b7280", fontSize: 14 }}>
-              차트 데이터 불러오는 중…
+              {ADMIN_DATA_LOADING_MESSAGE}
             </div>
           )}
           {!loading && loadError && (
@@ -1143,7 +1146,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <AdminGlobalLoadingOverlay
-        message={postboxChartsLoading ? "데이터 불러오는 중…" : null}
+        message={postboxChartsLoading ? ADMIN_DATA_LOADING_MESSAGE : null}
       />
       {comingSoonPtr ? (
         <div
@@ -1475,7 +1478,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
             >
               <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
               {postboxChartsLoading
-                ? "불러오는 중…"
+                ? ADMIN_DATA_LOADING_MESSAGE
                 : postboxCharts.length === 0
                   ? "item.csv / item{n}.csv 없음"
                   : "아이템 추가"}
