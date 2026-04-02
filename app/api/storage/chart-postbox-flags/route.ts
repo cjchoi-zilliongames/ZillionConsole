@@ -48,8 +48,8 @@ export type PostboxChartInfo = {
 };
 
 /**
- * GET: 인벤토리에서 논리 차트명이 `item` 인 차트만 `charts`로 반환.
- * (구형 Firestore 플래그 등록 방식은 사용하지 않음 — `flags`는 빈 객체로 고정)
+ * GET: 실제 파일명이 `item.csv` 또는 `item{숫자}.csv` 인 차트만 `charts`로 반환.
+ * (구형 `item_1.csv` 등은 제외 — `flags`는 빈 객체로 고정)
  */
 export async function GET(req: Request) {
   try {

@@ -452,7 +452,7 @@ function ChartPickerModal({
             autoComplete="off"
           />
           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 5 }}>
-            차트명이 item인 CSV만 표시됩니다 ({charts.length}개)
+            파일명이 item.csv 또는 item{"{n}"}.csv 인 것만 표시 ({charts.length}개)
           </div>
         </div>
 
@@ -460,9 +460,9 @@ function ChartPickerModal({
         <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid #f1f5f9" }}>
           {charts.length === 0 && (
             <div style={{ padding: "32px 0", textAlign: "center", fontSize: 13, color: "#94a3b8" }}>
-              차트명 item CSV가 없습니다.<br />
+              조건에 맞는 item CSV가 없습니다.<br />
               <span style={{ fontSize: 11 }}>
-                스펙 폴더에 item.csv / item{"{n}"}.csv 형태 파일이 있는지 확인하세요.
+                스펙에 올릴 때 파일명을 반드시 item.csv 또는 item{"{n}"}.csv 로 두세요. (item_1.csv 등 구형 이름은 우편 목록에 안 나옵니다)
               </span>
             </div>
           )}
@@ -1461,7 +1461,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
               }}
             >
               <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
-              {postboxCharts.length === 0 ? "차트명 item 없음" : "아이템 추가"}
+              {postboxCharts.length === 0 ? "item.csv / item{n}.csv 없음" : "아이템 추가"}
             </button>
           </FormRow>
 
