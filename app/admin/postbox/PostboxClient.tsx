@@ -15,6 +15,9 @@ import {
 } from "@/lib/admin-list-table-layout";
 import { AdminTableResizeHandle } from "@/lib/admin-table-resize-handle";
 import { useResizableAdminTableColumns } from "@/lib/use-resizable-admin-table-columns";
+import { usePostboxChangeSignal } from "./hooks/usePostboxChangeSignal";
+import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
+import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 
 const POSTBOX_COL_RESIZE_LABELS = [
   "선택 열과 번호 열 사이 너비 조절",
@@ -26,9 +29,9 @@ const POSTBOX_COL_RESIZE_LABELS = [
   "발송일 열과 만료일 열 사이 너비 조절",
   "만료일 열과 상태 열 사이 너비 조절",
 ] as const;
-import { usePostboxChangeSignal } from "./hooks/usePostboxChangeSignal";
-import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
-import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
+
+/** 우편 목록·수령 현황·차트 관리와 동일 */
+const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -266,7 +269,7 @@ export function PostboxClient() {
   return (
     <>
       <AdminGlobalLoadingOverlay
-        message={loading && !fetchError ? "데이터 불러오는 중…" : null}
+        message={loading && !fetchError ? ADMIN_DATA_LOADING_MESSAGE : null}
       />
       <div style={{ padding: "19px 0 40px", width: "100%" }}>
         {/* Header */}
@@ -951,6 +954,9 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
     >
+      <AdminGlobalLoadingOverlay
+        message={loading ? ADMIN_DATA_LOADING_MESSAGE : null}
+      />
       <div style={{
         background: "#fff",
         borderRadius: 12,
@@ -1088,22 +1094,15 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
           </div>
         </div>
 
-        {/* ── Body ── */}
+        {/* ── Body ── (로딩은 전역 오버레이) */}
         <div ref={bodyRef} style={{ flex: 1, overflowY: "auto", position: "relative" }}>
-          {/* 초기 로딩 (데이터 없음) */}
-          {loading && !data && (
-            <div style={{ padding: "60px 0", textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
-              불러오는 중…
-            </div>
-          )}
           {!loading && error && (
             <div style={{ padding: "60px 0", textAlign: "center", color: "#ef4444", fontSize: 13 }}>
               {error}
             </div>
           )}
-          {/* 데이터 있으면 로딩 중에도 테이블 유지, 투명도로 구분 */}
           {!error && data && (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, opacity: loading ? 0.4 : 1, transition: "opacity 0.15s" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 1 }}>
                   <th style={rThStyle}>#</th>
