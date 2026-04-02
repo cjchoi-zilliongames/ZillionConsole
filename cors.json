@@ -2,6 +2,7 @@
   {
     "origin": [
       "https://firebase-storage-admin.vercel.app",
+      "https://zillion-console.vercel.app",
       "http://localhost:3000",
       "http://localhost:3001"
     ],
