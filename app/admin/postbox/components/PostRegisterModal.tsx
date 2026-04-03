@@ -20,7 +20,6 @@ import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 
-const MAX_RECIPIENTS = 100;
 
 /** 우편 목록·차트 관리와 동일 (AdminGlobalLoadingOverlay 문구) */
 const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
@@ -318,7 +317,7 @@ function UserPickerModal({
           )}
           {!loading && users.map((u) => {
             const isAdded = pickedUsers.some((p) => p.uid === u.uid);
-            const maxReached = !isAdded && pickedUsers.length >= MAX_RECIPIENTS;
+            const maxReached = false;
             return (
               <button
                 key={u.uid}
@@ -358,7 +357,7 @@ function UserPickerModal({
           background: "#f9fafb",
         }}>
           <span style={{ fontSize: 12, color: "#6b7280" }}>
-            선택됨 <strong style={{ color: "#111827" }}>{pickedUsers.length}</strong> / {MAX_RECIPIENTS}
+            선택됨 <strong style={{ color: "#111827" }}>{pickedUsers.length}</strong>명
           </span>
 
           {/* 페이지네이션 (검색 모드가 아닐 때만) */}
@@ -1024,7 +1023,6 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
   function addPickedUser(u: PickedUser) {
     setPickedUsers((prev) => {
       if (prev.some((p) => p.uid === u.uid)) return prev;
-      if (prev.length >= MAX_RECIPIENTS) return prev;
       return [...prev, u];
     });
   }

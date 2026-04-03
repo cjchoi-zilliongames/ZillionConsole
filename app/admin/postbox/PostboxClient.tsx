@@ -53,9 +53,8 @@ function resolveStatus(post: PostDoc): PostboxStatus {
 }
 
 function formatTarget(post: PostDoc): string {
-  const n = Object.keys(post.recipientUids).length;
-  if (post.targetAudience === "specific" && n > 0) {
-    return `지정 ${n}명`;
+  if (post.targetAudience === "specific" && post.recipientCount > 0) {
+    return `지정 ${post.recipientCount}명`;
   }
   return "전체";
 }
@@ -190,7 +189,7 @@ export function PostboxClient() {
         Object.entries(p.recipientUids).some(
           ([uid, label]) =>
             uid.toLowerCase().includes(q) ||
-            label.toLowerCase().includes(q),
+            label.toLowerCase().includes(q)
         ),
     );
   }, [posts, search]);
@@ -559,13 +558,12 @@ export function PostboxClient() {
                       const status = resolveStatus(item);
                       const hasReward = item.rewards && item.rewards.length > 0;
                       const targetTitle =
-                        item.targetAudience === "specific" &&
-                        Object.keys(item.recipientUids).length > 0
-                          ? Object.entries(item.recipientUids)
-                              .map(([uid, label]) =>
-                                label ? `${label} (${uid})` : uid,
-                              )
-                              .join("\n")
+                        item.targetAudience === "specific" && item.recipientCount > 0
+                          ? Object.keys(item.recipientUids).length > 0
+                            ? Object.entries(item.recipientUids)
+                                .map(([uid, label]) => (label ? `${label} (${uid})` : uid))
+                                .join("\n")
+                            : `${item.recipientCount}명에게 발송됨`
                           : undefined;
                       return (
                         <tr

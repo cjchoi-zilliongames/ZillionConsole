@@ -9,6 +9,7 @@ import {
   COLLECTION_PERSONAL_MAILS,
   COLLECTION_PERSONAL_MAIL_DISPATCHES,
 } from "@/lib/firestore-mail-schema";
+import { downloadRecipientList } from "@/app/api/admin/postbox/posts/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,10 +51,6 @@ function receiptFromPersonalMailDoc(
 ): ReceiptRow {
   if (!data) {
     return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
-  }
-  const dismissedArr = data.global_dismissed as unknown;
-  if (Array.isArray(dismissedArr) && dismissedArr.some((x) => String(x) === globalMailId)) {
-    return { uid, displayName, type: "dismissed", claimedAt: null, dismissedAt: null };
   }
   const history = data.global_history as unknown;
   if (Array.isArray(history)) {
@@ -216,16 +213,34 @@ export async function GET(req: Request) {
       }
       targetAudience = "specific";
       const postData = postSnap.data()!;
-      const recipientMap = (postData.recipientUids ?? {}) as Record<string, string>;
-      const uids = Object.keys(recipientMap);
+
+      // 수신자 목록: Storage 기반(신규) 또는 레거시 recipientUids 맵
+      let recipientEntries: Array<{ uid: string; displayName: string }>;
+      if (typeof postData.recipientListPath === "string" && postData.recipientListPath) {
+        recipientEntries = await downloadRecipientList(postData.recipientListPath);
+      } else {
+        const recipientMap = (postData.recipientUids ?? {}) as Record<string, string>;
+        recipientEntries = Object.entries(recipientMap).map(([uid, displayName]) => ({ uid, displayName }));
+      }
+
+      const uids = recipientEntries.map((r) => r.uid);
+      const displayNames: Record<string, string> = Object.fromEntries(
+        recipientEntries.map((r) => [r.uid, r.displayName])
+      );
       total = uids.length;
 
       if (uids.length > 0) {
-        const refs = uids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
-        const snaps = await db.getAll(...refs);
-        receipts = uids.map((uid, i) =>
-          receiptFromPersonalListEntry(uid, recipientMap[uid] || uid, snaps[i]?.data(), postId)
-        );
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < uids.length; i += BATCH_SIZE) {
+          const chunk = uids.slice(i, i + BATCH_SIZE);
+          const refs = chunk.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
+          const snaps = await db.getAll(...refs);
+          receipts.push(
+            ...chunk.map((uid, j) =>
+              receiptFromPersonalListEntry(uid, displayNames[uid] || uid, snaps[j]?.data(), postId)
+            )
+          );
+        }
       }
     } else {
       return NextResponse.json(

@@ -5,8 +5,7 @@
  * personal_mails/{userUID}
  *   - personal_list[]
  *   - global_history[] (전체 우편 수령 기록)
- *   - global_dismissed[] (전체 우편 삭제 시 globalMailId 문자열)
- * personal_mail_dispatches/{mailId} — 관리자 목록·수령 조회용 (발송 1회당 1문서)
+ *personal_mail_dispatches/{mailId} — 관리자 목록·수령 조회용 (발송 1회당 1문서)
  *
  * 공통 필드 (global / dispatch): sender (유저에게 보이는 발송인 표시명)
  */

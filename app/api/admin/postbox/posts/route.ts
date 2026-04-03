@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { DocumentData, Firestore } from "firebase-admin/firestore";
-import { Timestamp } from "firebase-admin/firestore";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getFirestoreDb } from "@/lib/firebase-firestore";
+import { getSpecBucket } from "@/lib/firebase-admin";
 import { bumpPostboxSignalServer } from "@/lib/firestore-postbox-signal-server";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
@@ -43,7 +44,12 @@ export type PostDoc = {
   expiresAt: string;
   rewards: RewardEntry[];
   targetAudience: PostTargetAudience;
+  /** Storage 기반 발송: 비어있음. 레거시 발송: uid→displayName 맵 */
   recipientUids: PostRecipientUidMap;
+  /** 수신자 수 (Storage/레거시 모두 공통) */
+  recipientCount: number;
+  /** Storage 수신자 목록 경로. 레거시 문서는 빈 문자열 */
+  recipientListPath: string;
   mailStorage: MailStorageKind;
 };
 
@@ -155,11 +161,33 @@ function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
     rewards: storedToRewards(d.rewards),
     targetAudience: "all",
     recipientUids: {},
+    recipientCount: 0,
+    recipientListPath: "",
     mailStorage: "global_mails",
   };
 }
 
 function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
+  // Storage 기반 (신규)
+  if (typeof d.recipientListPath === "string" && d.recipientListPath) {
+    return {
+      postId: id,
+      postType: "Admin",
+      title: String(d.title ?? ""),
+      content: String(d.content ?? ""),
+      sender: String(d.sender ?? ""),
+      isActive: d.isActive !== false,
+      createdAt: tsToIso(d.createdAt),
+      expiresAt: tsToIso(d.expiresAt),
+      rewards: storedToRewards(d.rewards),
+      targetAudience: "specific",
+      recipientUids: {},
+      recipientCount: typeof d.recipientCount === "number" ? d.recipientCount : 0,
+      recipientListPath: d.recipientListPath,
+      mailStorage: "personal_mail_dispatches",
+    };
+  }
+  // 레거시 (recipientUids 맵)
   const recipientMap = normalizeRecipientMapFromDoc(d.recipientUids);
   return {
     postId: id,
@@ -173,6 +201,8 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
     rewards: storedToRewards(d.rewards),
     targetAudience: "specific",
     recipientUids: recipientMap,
+    recipientCount: Object.keys(recipientMap).length,
+    recipientListPath: "",
     mailStorage: "personal_mail_dispatches",
   };
 }
@@ -208,31 +238,44 @@ export async function GET(req: Request) {
 
 // ── POST ──────────────────────────────────────────────────────────────────────
 
-const MAX_RECIPIENTS = 100;
+type RecipientEntry = { uid: string; displayName: string };
+const RECIPIENT_STORAGE_PREFIX = "mail-dispatches";
 
-async function appendPersonalListForUser(
+async function uploadRecipientList(mailId: string, recipients: RecipientEntry[]): Promise<string> {
+  const path = `${RECIPIENT_STORAGE_PREFIX}/${mailId}/recipients.json`;
+  const file = getSpecBucket().file(path);
+  await file.save(JSON.stringify(recipients), { contentType: "application/json" });
+  return path;
+}
+
+export async function downloadRecipientList(path: string): Promise<RecipientEntry[]> {
+  const [content] = await getSpecBucket().file(path).download();
+  return JSON.parse(content.toString()) as RecipientEntry[];
+}
+
+async function deleteRecipientList(path: string): Promise<void> {
+  await getSpecBucket().file(path).delete({ ignoreNotFound: true });
+}
+
+/** personal_list에 항목 추가 — FieldValue.arrayUnion으로 500건씩 batch */
+async function writePersonalListBatch(
   db: Firestore,
-  uid: string,
+  uids: string[],
   entry: PersonalListEntry
 ): Promise<void> {
-  const ref = db.collection(COLLECTION_PERSONAL_MAILS).doc(uid);
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const data = snap.data() ?? {};
-    const personalList = Array.isArray(data.personal_list) ? [...data.personal_list] : [];
-    const globalHistory = Array.isArray(data.global_history) ? data.global_history : [];
-    const globalDismissed = Array.isArray(data.global_dismissed) ? data.global_dismissed : [];
-    personalList.push(entry);
-    tx.set(
-      ref,
-      {
-        personal_list: personalList,
-        global_history: globalHistory,
-        global_dismissed: globalDismissed,
-      },
-      { merge: true }
-    );
-  });
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < uids.length; i += BATCH_SIZE) {
+    const chunk = uids.slice(i, i + BATCH_SIZE);
+    const batch = db.batch();
+    for (const uid of chunk) {
+      batch.set(
+        db.collection(COLLECTION_PERSONAL_MAILS).doc(uid),
+        { personal_list: FieldValue.arrayUnion(entry) },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+  }
 }
 
 export async function POST(req: Request) {
@@ -296,26 +339,17 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (uids.length > MAX_RECIPIENTS) {
-      return NextResponse.json(
-        { ok: false, error: `수신자는 최대 ${MAX_RECIPIENTS}명까지 지정할 수 있습니다.` },
-        { status: 400 }
-      );
-    }
-    const refs = uids.map((uid) => db.collection("users").doc(uid));
-    const snaps = await db.getAll(...refs);
-    const missing = uids.filter((uid, i) => !snaps[i]?.exists);
-    if (missing.length > 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `users 컬렉션에 없는 UID가 있습니다: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? " …" : ""}`,
-        },
-        { status: 400 }
-      );
-    }
 
     const mailId = makePersonalMailId();
+
+    // 수신자 목록 → Storage
+    const recipients: RecipientEntry[] = uids.map((uid) => ({
+      uid,
+      displayName: rawMap[uid] ?? "",
+    }));
+    const recipientListPath = await uploadRecipientList(mailId, recipients);
+
+    // dispatch 문서 (수신자 목록은 Storage 경로만)
     await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set({
       title,
       content,
@@ -324,9 +358,11 @@ export async function POST(req: Request) {
       createdAt: Timestamp.fromDate(now),
       expiresAt: Timestamp.fromDate(expiresDate),
       rewards: storedRewards,
-      recipientUids: rawMap,
+      recipientListPath,
+      recipientCount: uids.length,
     });
 
+    // 유저별 personal_list에 500건씩 batch 추가
     const listEntry: PersonalListEntry = {
       mailId,
       title,
@@ -335,10 +371,7 @@ export async function POST(req: Request) {
       expiresAt: Timestamp.fromDate(expiresDate),
       sender: senderStr,
     };
-
-    for (const uid of uids) {
-      await appendPersonalListForUser(db, uid, listEntry);
-    }
+    await writePersonalListBatch(db, uids, listEntry);
 
     await bumpPostboxSignalServer(db);
     return NextResponse.json({ ok: true, postId: mailId });
@@ -349,28 +382,80 @@ export async function POST(req: Request) {
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
+/**
+ * 전체 우편(gm_*) 삭제 시 personal_mails의 global_history 정리.
+ * global_history는 array<object>라 array-contains 쿼리 불가 → personal_mails 전체 스캔.
+ */
+async function removeGlobalMailFromPersonalData(
+  db: Firestore,
+  globalMailId: string
+): Promise<void> {
+  // ── global_history 정리 (전체 스캔) ──────────────────────────────────────
+  let cursor: FirebaseFirestore.DocumentSnapshot | null = null;
+  const PAGE = 500;
+
+  for (;;) {
+    let q = db.collection(COLLECTION_PERSONAL_MAILS).orderBy("__name__").limit(PAGE);
+    if (cursor) q = q.startAfter(cursor) as typeof q;
+
+    const snap = await q.get();
+    if (snap.empty) break;
+
+    const batch = db.batch();
+    let dirty = false;
+
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const history = Array.isArray(data.global_history) ? data.global_history : [];
+      const next = history.filter(
+        (e: { globalMailId?: string }) => String(e?.globalMailId) !== globalMailId
+      );
+      if (next.length !== history.length) {
+        batch.update(doc.ref, { global_history: next });
+        dirty = true;
+      }
+    }
+
+    if (dirty) await batch.commit();
+    if (snap.docs.length < PAGE) break;
+    cursor = snap.docs[snap.docs.length - 1];
+  }
+}
+
 function mailStorageFromPostId(postId: string): MailStorageKind | null {
   if (postId.startsWith("gm_")) return "global_mails";
   if (postId.startsWith("pm_")) return "personal_mail_dispatches";
   return null;
 }
 
-async function removePersonalListEntry(
+/** personal_list에서 mailId 항목 제거 — 500건씩 batch 읽기+쓰기 */
+async function removePersonalListBatch(
   db: Firestore,
-  uid: string,
+  uids: string[],
   mailId: string
 ): Promise<void> {
-  const ref = db.collection(COLLECTION_PERSONAL_MAILS).doc(uid);
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) return;
-    const data = snap.data()!;
-    const personalList = Array.isArray(data.personal_list) ? data.personal_list : [];
-    const next = personalList.filter(
-      (e: { mailId?: string }) => String(e?.mailId) !== mailId
-    );
-    tx.set(ref, { personal_list: next }, { merge: true });
-  });
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < uids.length; i += BATCH_SIZE) {
+    const chunk = uids.slice(i, i + BATCH_SIZE);
+    const refs = chunk.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
+    const snaps = await db.getAll(...refs);
+    const batch = db.batch();
+    let dirty = false;
+    for (let j = 0; j < chunk.length; j++) {
+      const snap = snaps[j];
+      if (!snap?.exists) continue;
+      const data = snap.data()!;
+      const personalList = Array.isArray(data.personal_list) ? data.personal_list : [];
+      const next = personalList.filter(
+        (e: { mailId?: string }) => String(e?.mailId) !== mailId
+      );
+      if (next.length !== personalList.length) {
+        batch.update(snap.ref, { personal_list: next });
+        dirty = true;
+      }
+    }
+    if (dirty) await batch.commit();
+  }
 }
 
 export async function DELETE(req: Request) {
@@ -393,14 +478,22 @@ export async function DELETE(req: Request) {
       }
       if (kind === "global_mails") {
         await db.collection(COLLECTION_GLOBAL_MAILS).doc(postId).delete();
+        await removeGlobalMailFromPersonalData(db, postId);
         continue;
       }
       const dRef = db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId);
       const dSnap = await dRef.get();
       if (dSnap.exists) {
-        const recipientMap = normalizeRecipientMapFromDoc(dSnap.data()?.recipientUids);
-        for (const uid of Object.keys(recipientMap)) {
-          await removePersonalListEntry(db, uid, postId);
+        const data = dSnap.data()!;
+        // Storage 기반 (신규)
+        if (typeof data.recipientListPath === "string" && data.recipientListPath) {
+          const recipients = await downloadRecipientList(data.recipientListPath);
+          await removePersonalListBatch(db, recipients.map((r) => r.uid), postId);
+          await deleteRecipientList(data.recipientListPath);
+        } else {
+          // 레거시 (recipientUids 맵)
+          const recipientMap = normalizeRecipientMapFromDoc(data.recipientUids);
+          await removePersonalListBatch(db, Object.keys(recipientMap), postId);
         }
       }
       await dRef.delete();
