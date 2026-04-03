@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { Timestamp, FieldPath } from "firebase-admin/firestore";
+import type { DocumentData } from "firebase-admin/firestore";
 import { getFirestoreDb } from "@/lib/firebase-firestore";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
+import {
+  COLLECTION_GLOBAL_MAILS,
+  COLLECTION_PERSONAL_MAILS,
+  COLLECTION_PERSONAL_MAIL_DISPATCHES,
+} from "@/lib/firestore-mail-schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,24 +16,20 @@ export const dynamic = "force-dynamic";
 export type ReceiptRow = {
   uid: string;
   displayName: string;
-  /** claimed: 수령 / dismissed: 삭제 / pending: 미수령 (PostUserData 문서 없음) */
   type: "claimed" | "dismissed" | "pending";
-  claimedAt: string | null;   // ISO
-  dismissedAt: string | null; // ISO
+  claimedAt: string | null;
+  dismissedAt: string | null;
 };
 
 export type ReceiptsResponse = {
   ok: true;
   postId: string;
   targetAudience: "all" | "specific";
-  /** all: 전체 유저 수(COUNT) or 검색 결과 수, specific: 수신자 수 */
   total: number;
-  /** 현재 페이지/결과 기준 집계 */
   claimed: number;
   dismissed: number;
   pending: number;
   receipts: ReceiptRow[];
-  /** 다음 페이지 커서 (null이면 마지막 페이지 or 검색 모드) */
   nextCursor: string | null;
 };
 
@@ -40,20 +42,64 @@ function toIso(val: unknown): string | null {
   return null;
 }
 
-function docToRow(uid: string, displayName: string, data: FirebaseFirestore.DocumentData | undefined): ReceiptRow {
+function receiptFromPersonalMailDoc(
+  uid: string,
+  displayName: string,
+  data: DocumentData | undefined,
+  globalMailId: string
+): ReceiptRow {
   if (!data) {
     return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
   }
-  const rawType = data.type as string | undefined;
-  const type: "claimed" | "dismissed" =
-    rawType === "dismissed" ? "dismissed" : "claimed";
-  return {
-    uid,
-    displayName,
-    type,
-    claimedAt: toIso(data.claimedAt),
-    dismissedAt: toIso(data.dismissedAt),
-  };
+  const dismissedArr = data.global_dismissed as unknown;
+  if (Array.isArray(dismissedArr) && dismissedArr.some((x) => String(x) === globalMailId)) {
+    return { uid, displayName, type: "dismissed", claimedAt: null, dismissedAt: null };
+  }
+  const history = data.global_history as unknown;
+  if (Array.isArray(history)) {
+    for (const e of history) {
+      if (e && typeof e === "object" && String((e as { globalMailId?: string }).globalMailId) === globalMailId) {
+        return {
+          uid,
+          displayName,
+          type: "claimed",
+          claimedAt: toIso((e as { claimedAt?: unknown }).claimedAt),
+          dismissedAt: null,
+        };
+      }
+    }
+  }
+  return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
+}
+
+function receiptFromPersonalListEntry(
+  uid: string,
+  displayName: string,
+  data: DocumentData | undefined,
+  mailId: string
+): ReceiptRow {
+  if (!data) {
+    return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
+  }
+  const list = data.personal_list as unknown;
+  if (!Array.isArray(list)) {
+    return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
+  }
+  const item = list.find(
+    (e: unknown) => e && typeof e === "object" && String((e as { mailId?: string }).mailId) === mailId
+  ) as { claimedAt?: unknown; dismissedAt?: unknown } | undefined;
+  if (!item) {
+    return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
+  }
+  const dismissedAt = toIso(item.dismissedAt);
+  if (dismissedAt) {
+    return { uid, displayName, type: "dismissed", claimedAt: null, dismissedAt };
+  }
+  const claimedAt = toIso(item.claimedAt);
+  if (claimedAt) {
+    return { uid, displayName, type: "claimed", claimedAt, dismissedAt: null };
+  }
+  return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
 }
 
 export async function GET(req: Request) {
@@ -69,118 +115,125 @@ export async function GET(req: Request) {
     const cursor = (url.searchParams.get("cursor") ?? "").trim() || null;
     const search = (url.searchParams.get("search") ?? "").trim();
 
-    const postSnap = await db.collection("posts").doc(postId).get();
-    if (!postSnap.exists) {
-      return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
-    }
-    const postData = postSnap.data()!;
-    const targetAudience: "all" | "specific" =
-      postData.targetAudience === "specific" ? "specific" : "all";
-
     let receipts: ReceiptRow[] = [];
     let total = 0;
     let nextCursor: string | null = null;
+    let targetAudience: "all" | "specific" = "all";
 
-    if (targetAudience === "specific") {
-      // 수신자 목록 확정 — 페이지네이션 불필요 (MAX 100명), 검색은 클라이언트 처리
+    if (postId.startsWith("gm_")) {
+      const postSnap = await db.collection(COLLECTION_GLOBAL_MAILS).doc(postId).get();
+      if (!postSnap.exists) {
+        return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
+      }
+      targetAudience = "all";
+
+      if (search) {
+        const upperBound = search + "\uf8ff";
+        const [uidSnap, nicknameSnap] = await Promise.all([
+          db
+            .collection("users")
+            .where(FieldPath.documentId(), ">=", search)
+            .where(FieldPath.documentId(), "<=", upperBound)
+            .limit(50)
+            .get(),
+          db
+            .collection("users")
+            .where("UserInfo.Nickname", ">=", search)
+            .where("UserInfo.Nickname", "<=", upperBound)
+            .limit(50)
+            .get(),
+        ]);
+
+        const seen = new Set<string>();
+        const searchDocs: Array<{ id: string; getData: () => DocumentData }> = [];
+        for (const doc of [...uidSnap.docs, ...nicknameSnap.docs]) {
+          if (!seen.has(doc.id)) {
+            seen.add(doc.id);
+            searchDocs.push({ id: doc.id, getData: () => doc.data() });
+          }
+        }
+
+        const searchUids = searchDocs.map((d) => d.id);
+        const searchNames: Record<string, string> = {};
+        for (const d of searchDocs) {
+          const dData = d.getData();
+          searchNames[d.id] =
+            (dData?.UserInfo?.Nickname as string | undefined) ??
+            (dData?.UserInfo?.FS_UID as string | undefined) ??
+            "";
+        }
+
+        total = searchUids.length;
+        if (searchUids.length > 0) {
+          const refs = searchUids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
+          const snaps = await db.getAll(...refs);
+          receipts = searchUids.map((uid, i) =>
+            receiptFromPersonalMailDoc(uid, searchNames[uid] || uid, snaps[i]?.data(), postId)
+          );
+        }
+      } else {
+        let query = db
+          .collection("users")
+          .orderBy(FieldPath.documentId())
+          .limit(PAGE_SIZE + 1);
+        if (cursor) {
+          query = query.startAfter(cursor) as typeof query;
+        }
+
+        const [usersSnap, totalCountSnap] = await Promise.all([
+          query.get(),
+          db.collection("users").count().get(),
+        ]);
+
+        total = totalCountSnap.data().count;
+
+        const hasMore = usersSnap.docs.length > PAGE_SIZE;
+        const userDocs = usersSnap.docs.slice(0, PAGE_SIZE);
+        nextCursor = hasMore ? (userDocs[userDocs.length - 1]?.id ?? null) : null;
+
+        const uids = userDocs.map((d) => d.id);
+        const displayNames: Record<string, string> = {};
+        for (const d of userDocs) {
+          const data = d.data();
+          displayNames[d.id] =
+            (data?.UserInfo?.Nickname as string | undefined) ??
+            (data?.UserInfo?.FS_UID as string | undefined) ??
+            "";
+        }
+
+        if (uids.length > 0) {
+          const refs = uids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
+          const snaps = await db.getAll(...refs);
+          receipts = uids.map((uid, i) =>
+            receiptFromPersonalMailDoc(uid, displayNames[uid] || uid, snaps[i]?.data(), postId)
+          );
+        }
+      }
+    } else if (postId.startsWith("pm_")) {
+      const postSnap = await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId).get();
+      if (!postSnap.exists) {
+        return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
+      }
+      targetAudience = "specific";
+      const postData = postSnap.data()!;
       const recipientMap = (postData.recipientUids ?? {}) as Record<string, string>;
       const uids = Object.keys(recipientMap);
       total = uids.length;
 
       if (uids.length > 0) {
-        const refs = uids.map((uid) =>
-          db.collection("users").doc(uid).collection("PostUserData").doc(postId),
-        );
+        const refs = uids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
         const snaps = await db.getAll(...refs);
         receipts = uids.map((uid, i) =>
-          docToRow(uid, recipientMap[uid] || uid, snaps[i]?.data()),
+          receiptFromPersonalListEntry(uid, recipientMap[uid] || uid, snaps[i]?.data(), postId)
         );
       }
-    } else if (search) {
-      // 전체 발송 + 검색 모드: UID 접두사 + Nickname 접두사 쿼리
-      const upperBound = search + "\uf8ff";
-      const [uidSnap, nicknameSnap] = await Promise.all([
-        db.collection("users")
-          .where(FieldPath.documentId(), ">=", search)
-          .where(FieldPath.documentId(), "<=", upperBound)
-          .limit(50)
-          .get(),
-        db.collection("users")
-          .where("UserInfo.Nickname", ">=", search)
-          .where("UserInfo.Nickname", "<=", upperBound)
-          .limit(50)
-          .get(),
-      ]);
-
-      // 중복 제거 병합
-      const seen = new Set<string>();
-      const searchDocs: Array<{ id: string; getData: () => FirebaseFirestore.DocumentData }> = [];
-      for (const doc of [...uidSnap.docs, ...nicknameSnap.docs]) {
-        if (!seen.has(doc.id)) {
-          seen.add(doc.id);
-          searchDocs.push({ id: doc.id, getData: () => doc.data() });
-        }
-      }
-
-      const searchUids = searchDocs.map((d) => d.id);
-      const searchNames: Record<string, string> = {};
-      for (const d of searchDocs) {
-        const dData = d.getData();
-        searchNames[d.id] = (dData?.UserInfo?.Nickname as string | undefined) ?? (dData?.UserInfo?.FS_UID as string | undefined) ?? "";
-      }
-
-      total = searchUids.length;
-      if (searchUids.length > 0) {
-        const refs = searchUids.map((uid) =>
-          db.collection("users").doc(uid).collection("PostUserData").doc(postId),
-        );
-        const snaps = await db.getAll(...refs);
-        receipts = searchUids.map((uid, i) =>
-          docToRow(uid, searchNames[uid] || uid, snaps[i]?.data()),
-        );
-      }
-      // nextCursor = null → 검색 모드에서 페이지네이션 없음
     } else {
-      // 전체 발송 + 커서 기반 페이지네이션
-      let query = db
-        .collection("users")
-        .orderBy(FieldPath.documentId())
-        .limit(PAGE_SIZE + 1);
-      if (cursor) {
-        query = query.startAfter(cursor) as typeof query;
-      }
-
-      const [usersSnap, totalCountSnap] = await Promise.all([
-        query.get(),
-        db.collection("users").count().get(),
-      ]);
-
-      total = totalCountSnap.data().count;
-
-      const hasMore = usersSnap.docs.length > PAGE_SIZE;
-      const userDocs = usersSnap.docs.slice(0, PAGE_SIZE);
-      nextCursor = hasMore ? (userDocs[userDocs.length - 1]?.id ?? null) : null;
-
-      const uids = userDocs.map((d) => d.id);
-      const displayNames: Record<string, string> = {};
-      for (const d of userDocs) {
-        const data = d.data();
-        displayNames[d.id] =
-          (data?.UserInfo?.Nickname as string | undefined) ?? (data?.UserInfo?.FS_UID as string | undefined) ?? "";
-      }
-
-      if (uids.length > 0) {
-        const refs = uids.map((uid) =>
-          db.collection("users").doc(uid).collection("PostUserData").doc(postId),
-        );
-        const snaps = await db.getAll(...refs);
-        receipts = uids.map((uid, i) =>
-          docToRow(uid, displayNames[uid] || uid, snaps[i]?.data()),
-        );
-      }
+      return NextResponse.json(
+        { ok: false, error: "지원하지 않는 우편 ID 형식입니다. (gm_ 또는 pm_ 접두사)" },
+        { status: 400 }
+      );
     }
 
-    // 정렬: claimed → dismissed → pending, 같은 type 내에서 최신순
     receipts.sort((a, b) => {
       const order = { claimed: 0, dismissed: 1, pending: 2 };
       if (order[a.type] !== order[b.type]) return order[a.type] - order[b.type];
