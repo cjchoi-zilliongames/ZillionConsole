@@ -6,7 +6,7 @@
  *   - personal_list[]
  *   - global_history[] (전체 우편 수령 기록)
  *
- * 개인 우편 발송 메타·수신자: Storage 단일 파일 mail-dispatches/personal-mails.json (lib/mail-dispatches-storage.ts)
+ * personal_mail_dispatches/{mailId} — 개인 우편 메타(소형). 수신자 목록은 Storage mail-dispatches/{mailId}/recipients.json
  *
  * 공통 필드 (global / dispatch): sender (유저에게 보이는 발송인 표시명)
  */
@@ -15,6 +15,8 @@ import type { Timestamp } from "firebase-admin/firestore";
 
 export const COLLECTION_GLOBAL_MAILS = "global_mails";
 export const COLLECTION_PERSONAL_MAILS = "personal_mails";
+/** 개인 우편 발송 메타(제목·보상·recipientListPath 등). 수신자 본문은 Storage */
+export const COLLECTION_PERSONAL_MAIL_DISPATCHES = "personal_mail_dispatches";
 
 export type MailRewardStored = {
   table: string;

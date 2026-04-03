@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 import type { DocumentData, Firestore } from "firebase-admin/firestore";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
+import { Timestamp, FieldValue, FieldPath } from "firebase-admin/firestore";
 import { getFirestoreDb } from "@/lib/firebase-firestore";
 import { bumpPostboxSignalServer } from "@/lib/firestore-postbox-signal-server";
 import {
-  appendPersonalDispatchItem,
-  listPersonalDispatchItems,
-  removePersonalDispatchItem,
-  type PersonalDispatchItem,
+  deleteRecipientList,
+  downloadRecipientList,
+  uploadRecipientList,
 } from "@/lib/mail-dispatches-storage";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
 import {
   COLLECTION_GLOBAL_MAILS,
   COLLECTION_PERSONAL_MAILS,
+  COLLECTION_PERSONAL_MAIL_DISPATCHES,
   type MailRewardStored,
   type PersonalListEntry,
 } from "@/lib/firestore-mail-schema";
@@ -35,7 +35,7 @@ export type RewardEntry = {
 };
 
 /** 관리자 API용 — 실제 저장소 구분 */
-export type MailStorageKind = "global_mails" | "personal_mails_json";
+export type MailStorageKind = "global_mails" | "personal_mail_dispatches";
 
 export type PostDoc = {
   postId: string;
@@ -48,9 +48,11 @@ export type PostDoc = {
   expiresAt: string;
   rewards: RewardEntry[];
   targetAudience: PostTargetAudience;
-  /** 개인 우편: 단일 JSON 내 recipients에서 채움. 전체 우편: 빈 객체 */
+  /** Storage 수신자 파일(pm_*): 비움. 레거시 dispatch(문서 내 recipientUids): uid→표시명 */
   recipientUids: PostRecipientUidMap;
   recipientCount: number;
+  /** mail-dispatches/{mailId}/recipients.json — 없으면 빈 문자열 */
+  recipientListPath: string;
   mailStorage: MailStorageKind;
 };
 
@@ -163,29 +165,280 @@ function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
     targetAudience: "all",
     recipientUids: {},
     recipientCount: 0,
+    recipientListPath: "",
     mailStorage: "global_mails",
   };
 }
 
-function personalItemToPostDoc(item: PersonalDispatchItem): PostDoc {
-  const recipientUids: PostRecipientUidMap = {};
-  for (const r of item.recipients) {
-    recipientUids[r.uid] = r.displayName;
+function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
+  if (typeof d.recipientListPath === "string" && d.recipientListPath) {
+    return {
+      postId: id,
+      postType: "Admin",
+      title: String(d.title ?? ""),
+      content: String(d.content ?? ""),
+      sender: String(d.sender ?? ""),
+      isActive: d.isActive !== false,
+      createdAt: tsToIso(d.createdAt),
+      expiresAt: tsToIso(d.expiresAt),
+      rewards: storedToRewards(d.rewards),
+      targetAudience: "specific",
+      recipientUids: {},
+      recipientCount: typeof d.recipientCount === "number" ? d.recipientCount : 0,
+      recipientListPath: d.recipientListPath,
+      mailStorage: "personal_mail_dispatches",
+    };
   }
+  const recipientMap = normalizeRecipientMapFromDoc(d.recipientUids);
   return {
-    postId: item.postId,
+    postId: id,
     postType: "Admin",
-    title: item.title,
-    content: item.content,
-    sender: item.sender,
-    isActive: item.isActive,
-    createdAt: item.createdAt,
-    expiresAt: item.expiresAt,
-    rewards: storedToRewards(item.rewards),
+    title: String(d.title ?? ""),
+    content: String(d.content ?? ""),
+    sender: String(d.sender ?? ""),
+    isActive: d.isActive !== false,
+    createdAt: tsToIso(d.createdAt),
+    expiresAt: tsToIso(d.expiresAt),
+    rewards: storedToRewards(d.rewards),
     targetAudience: "specific",
-    recipientUids,
-    recipientCount: item.recipientCount,
-    mailStorage: "personal_mails_json",
+    recipientUids: recipientMap,
+    recipientCount: Object.keys(recipientMap).length,
+    recipientListPath: "",
+    mailStorage: "personal_mail_dispatches",
+  };
+}
+
+// ── GET: global_mails + personal_mail_dispatches 병합 페이지네이션 ────────────
+
+type StreamCursor = { id: string; ms: number };
+
+type PostsListCursorPayload = {
+  v: 1;
+  gQ: string[];
+  pQ: string[];
+  gTail: StreamCursor | null;
+  pTail: StreamCursor | null;
+  gDone: boolean;
+  pDone: boolean;
+};
+
+function encodePostsCursor(p: PostsListCursorPayload): string {
+  return Buffer.from(JSON.stringify(p), "utf8").toString("base64url");
+}
+
+function decodePostsCursor(s: string): PostsListCursorPayload | null {
+  try {
+    const j = JSON.parse(Buffer.from(s, "base64url").toString("utf8")) as unknown;
+    if (!j || typeof j !== "object") return null;
+    const o = j as Record<string, unknown>;
+    if (o.v !== 1) return null;
+    if (!Array.isArray(o.gQ) || !Array.isArray(o.pQ)) return null;
+    const parseTail = (x: unknown): StreamCursor | null => {
+      if (!x || typeof x !== "object") return null;
+      const t = x as { id?: string; ms?: number };
+      if (typeof t.id !== "string" || typeof t.ms !== "number") return null;
+      return { id: t.id, ms: t.ms };
+    };
+    return {
+      v: 1,
+      gQ: o.gQ.filter((x): x is string => typeof x === "string"),
+      pQ: o.pQ.filter((x): x is string => typeof x === "string"),
+      gTail: parseTail(o.gTail),
+      pTail: parseTail(o.pTail),
+      gDone: o.gDone === true,
+      pDone: o.pDone === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function docCreatedMs(d: DocumentData): number {
+  const c = d.createdAt;
+  return c instanceof Timestamp ? c.toMillis() : 0;
+}
+
+async function hydrateDocMap(
+  db: Firestore,
+  collectionName: string,
+  ids: string[]
+): Promise<Map<string, DocumentData>> {
+  const m = new Map<string, DocumentData>();
+  const CH = 100;
+  for (let i = 0; i < ids.length; i += CH) {
+    const chunk = ids.slice(i, i + CH);
+    const refs = chunk.map((id) => db.collection(collectionName).doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const s of snaps) {
+      if (s.exists) m.set(s.id, s.data()!);
+    }
+  }
+  return m;
+}
+
+const MERGE_CHUNK = 35;
+const MERGE_MIN_QUEUE = 12;
+
+type MergeWorkState = {
+  gQ: string[];
+  pQ: string[];
+  gTail: StreamCursor | null;
+  pTail: StreamCursor | null;
+  gDone: boolean;
+  pDone: boolean;
+};
+
+async function refillGlobalQueue(
+  db: Firestore,
+  st: MergeWorkState,
+  gMap: Map<string, DocumentData>
+): Promise<void> {
+  let q = db
+    .collection(COLLECTION_GLOBAL_MAILS)
+    .orderBy("createdAt", "desc")
+    .orderBy(FieldPath.documentId(), "desc")
+    .limit(MERGE_CHUNK);
+  if (st.gTail) {
+    q = q.startAfter(Timestamp.fromMillis(st.gTail.ms), st.gTail.id) as typeof q;
+  }
+  const snap = await q.get();
+  if (snap.empty) {
+    st.gDone = true;
+    return;
+  }
+  for (const doc of snap.docs) {
+    st.gQ.push(doc.id);
+    gMap.set(doc.id, doc.data());
+  }
+  const last = snap.docs[snap.docs.length - 1]!;
+  st.gTail = { id: last.id, ms: docCreatedMs(last.data()) };
+}
+
+async function refillPersonalQueue(
+  db: Firestore,
+  st: MergeWorkState,
+  pMap: Map<string, DocumentData>
+): Promise<void> {
+  let q = db
+    .collection(COLLECTION_PERSONAL_MAIL_DISPATCHES)
+    .orderBy("createdAt", "desc")
+    .orderBy(FieldPath.documentId(), "desc")
+    .limit(MERGE_CHUNK);
+  if (st.pTail) {
+    q = q.startAfter(Timestamp.fromMillis(st.pTail.ms), st.pTail.id) as typeof q;
+  }
+  const snap = await q.get();
+  if (snap.empty) {
+    st.pDone = true;
+    return;
+  }
+  for (const doc of snap.docs) {
+    st.pQ.push(doc.id);
+    pMap.set(doc.id, doc.data());
+  }
+  const last = snap.docs[snap.docs.length - 1]!;
+  st.pTail = { id: last.id, ms: docCreatedMs(last.data()) };
+}
+
+function pickGlobalFirst(
+  gid: string,
+  pid: string,
+  gMap: Map<string, DocumentData>,
+  pMap: Map<string, DocumentData>
+): boolean {
+  const tg = docCreatedMs(gMap.get(gid)!);
+  const tp = docCreatedMs(pMap.get(pid)!);
+  if (tg !== tp) return tg > tp;
+  return gid.localeCompare(pid) >= 0;
+}
+
+async function fetchMergedAdminPosts(
+  db: Firestore,
+  pageSize: number,
+  cursorRaw: string | null
+): Promise<{ posts: PostDoc[]; nextCursor: string | null; hasMore: boolean }> {
+  let st: MergeWorkState;
+  if (cursorRaw) {
+    const decoded = decodePostsCursor(cursorRaw);
+    if (!decoded) {
+      st = {
+        gQ: [],
+        pQ: [],
+        gTail: null,
+        pTail: null,
+        gDone: false,
+        pDone: false,
+      };
+    } else {
+      st = {
+        gQ: [...decoded.gQ],
+        pQ: [...decoded.pQ],
+        gTail: decoded.gTail,
+        pTail: decoded.pTail,
+        gDone: decoded.gDone,
+        pDone: decoded.pDone,
+      };
+    }
+  } else {
+    st = {
+      gQ: [],
+      pQ: [],
+      gTail: null,
+      pTail: null,
+      gDone: false,
+      pDone: false,
+    };
+  }
+
+  const gMap = await hydrateDocMap(db, COLLECTION_GLOBAL_MAILS, st.gQ);
+  const pMap = await hydrateDocMap(db, COLLECTION_PERSONAL_MAIL_DISPATCHES, st.pQ);
+
+  const out: PostDoc[] = [];
+
+  while (out.length < pageSize) {
+    if (st.gQ.length < MERGE_MIN_QUEUE && !st.gDone) {
+      await refillGlobalQueue(db, st, gMap);
+    }
+    if (st.pQ.length < MERGE_MIN_QUEUE && !st.pDone) {
+      await refillPersonalQueue(db, st, pMap);
+    }
+
+    const gh = st.gQ[0];
+    const ph = st.pQ[0];
+    if (gh === undefined && ph === undefined) break;
+
+    if (ph === undefined || (gh !== undefined && pickGlobalFirst(gh, ph, gMap, pMap))) {
+      const id = st.gQ.shift()!;
+      const data = gMap.get(id);
+      if (!data) break;
+      gMap.delete(id);
+      out.push(docToPostDocGlobal(id, data));
+    } else {
+      const id = st.pQ.shift()!;
+      const data = pMap.get(id);
+      if (!data) break;
+      pMap.delete(id);
+      out.push(docToPostDocDispatch(id, data));
+    }
+  }
+
+  const hasMore =
+    out.length === pageSize && (!st.gDone || st.gQ.length > 0 || !st.pDone || st.pQ.length > 0);
+
+  const payload: PostsListCursorPayload = {
+    v: 1,
+    gQ: st.gQ,
+    pQ: st.pQ,
+    gTail: st.gTail,
+    pTail: st.pTail,
+    gDone: st.gDone,
+    pDone: st.pDone,
+  };
+
+  return {
+    posts: out,
+    nextCursor: hasMore ? encodePostsCursor(payload) : null,
+    hasMore,
   };
 }
 
@@ -199,20 +452,18 @@ export async function GET(req: Request) {
     const postType = (url.searchParams.get("postType") ?? "Admin") as PostType;
 
     if (postType !== "Admin") {
-      return NextResponse.json({ ok: true, posts: [] as PostDoc[] });
+      return NextResponse.json({ ok: true, posts: [] as PostDoc[], nextCursor: null, hasMore: false });
     }
 
-    const [globalSnap, personalItems] = await Promise.all([
-      db.collection(COLLECTION_GLOBAL_MAILS).limit(500).get(),
-      listPersonalDispatchItems(),
-    ]);
+    const limitRaw = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const pageSize = Number.isFinite(limitRaw)
+      ? Math.min(100, Math.max(10, limitRaw))
+      : 50;
+    const cursorParam = (url.searchParams.get("cursor") ?? "").trim() || null;
 
-    const posts: PostDoc[] = [
-      ...globalSnap.docs.map((doc) => docToPostDocGlobal(doc.id, doc.data())),
-      ...personalItems.map(personalItemToPostDoc),
-    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const { posts, nextCursor, hasMore } = await fetchMergedAdminPosts(db, pageSize, cursorParam);
 
-    return NextResponse.json({ ok: true, posts });
+    return NextResponse.json({ ok: true, posts, nextCursor, hasMore });
   } catch (e) {
     return jsonStorageError(e);
   }
@@ -312,29 +563,19 @@ export async function POST(req: Request) {
       displayName: rawMap[uid] ?? "",
     }));
 
-    const dispatchItem: PersonalDispatchItem = {
-      postId: mailId,
+    const recipientListPath = await uploadRecipientList(mailId, recipients);
+
+    await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set({
       title,
       content,
       sender: senderStr,
-      rewards: storedRewards,
-      expiresAt: expiresDate.toISOString(),
-      createdAt: now.toISOString(),
       isActive: true,
+      createdAt: Timestamp.fromDate(now),
+      expiresAt: Timestamp.fromDate(expiresDate),
+      rewards: storedRewards,
+      recipientListPath,
       recipientCount: uids.length,
-      recipients,
-    };
-    try {
-      await appendPersonalDispatchItem(dispatchItem);
-    } catch (e) {
-      if (e instanceof Error && e.message === "DUPLICATE_POST_ID") {
-        return NextResponse.json(
-          { ok: false, error: "우편 ID가 겹쳤습니다. 잠시 후 다시 시도해 주세요." },
-          { status: 409 }
-        );
-      }
-      throw e;
-    }
+    });
 
     // 유저별 personal_list에 500건씩 batch 추가
     const listEntry: PersonalListEntry = {
@@ -398,7 +639,7 @@ async function removeGlobalMailFromPersonalData(
 
 function mailStorageFromPostId(postId: string): MailStorageKind | null {
   if (postId.startsWith("gm_")) return "global_mails";
-  if (postId.startsWith("pm_")) return "personal_mails_json";
+  if (postId.startsWith("pm_")) return "personal_mail_dispatches";
   return null;
 }
 
@@ -455,14 +696,24 @@ export async function DELETE(req: Request) {
         await removeGlobalMailFromPersonalData(db, postId);
         continue;
       }
-      const removed = await removePersonalDispatchItem(postId);
-      if (removed) {
-        await removePersonalListBatch(
-          db,
-          removed.recipients.map((r) => r.uid),
-          postId
-        );
+      const dRef = db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId);
+      const dSnap = await dRef.get();
+      if (dSnap.exists) {
+        const data = dSnap.data()!;
+        if (typeof data.recipientListPath === "string" && data.recipientListPath) {
+          const recs = await downloadRecipientList(data.recipientListPath);
+          await removePersonalListBatch(
+            db,
+            recs.map((r) => r.uid),
+            postId
+          );
+          await deleteRecipientList(data.recipientListPath);
+        } else {
+          const recipientMap = normalizeRecipientMapFromDoc(data.recipientUids);
+          await removePersonalListBatch(db, Object.keys(recipientMap), postId);
+        }
       }
+      await dRef.delete();
     }
 
     await bumpPostboxSignalServer(db);

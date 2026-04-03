@@ -130,6 +130,9 @@ export function PostboxClient() {
   // ── Data fetching ──────────────────────────────────────────────────────────
   const [posts, setPosts] = useState<PostDoc[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMorePosts, setLoadingMorePosts] = useState(false);
+  const [postsNextCursor, setPostsNextCursor] = useState<string | null>(null);
+  const [postsHasMore, setPostsHasMore] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   const {
@@ -150,13 +153,30 @@ export function PostboxClient() {
     }
     try {
       const postType = TAB_POST_TYPE[activeTab];
-      const res = await authFetch(`/api/admin/postbox/posts?postType=${postType}`);
-      const data = await res.json() as { ok: boolean; posts?: PostDoc[]; error?: string };
+      const params = new URLSearchParams({ postType });
+      if (postType === "Admin") {
+        params.set("limit", "60");
+      }
+      const res = await authFetch(`/api/admin/postbox/posts?${params}`);
+      const data = await res.json() as {
+        ok: boolean;
+        posts?: PostDoc[];
+        nextCursor?: string | null;
+        hasMore?: boolean;
+        error?: string;
+      };
       if (!data.ok) throw new Error(data.error ?? "목록 로드 실패");
       const sorted = (data.posts ?? []).sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
       setPosts(sorted);
+      if (postType === "Admin") {
+        setPostsNextCursor(data.nextCursor ?? null);
+        setPostsHasMore(data.hasMore === true);
+      } else {
+        setPostsNextCursor(null);
+        setPostsHasMore(false);
+      }
       if (soft) setFetchError(null);
     } catch (e) {
       if (!soft) {
@@ -166,6 +186,43 @@ export function PostboxClient() {
       if (!soft) setLoading(false);
     }
   }, [activeTab]);
+
+  const loadMorePosts = useCallback(async () => {
+    if (activeTab !== "admin" || !postsNextCursor) return;
+    setLoadingMorePosts(true);
+    try {
+      const params = new URLSearchParams({
+        postType: "Admin",
+        limit: "60",
+        cursor: postsNextCursor,
+      });
+      const res = await authFetch(`/api/admin/postbox/posts?${params}`);
+      const data = await res.json() as {
+        ok: boolean;
+        posts?: PostDoc[];
+        nextCursor?: string | null;
+        hasMore?: boolean;
+        error?: string;
+      };
+      if (!data.ok) throw new Error(data.error ?? "목록 로드 실패");
+      const batch = (data.posts ?? []).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      setPosts((prev) => {
+        const seen = new Set(prev.map((p) => p.postId));
+        const add = batch.filter((p) => !seen.has(p.postId));
+        return [...prev, ...add].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      });
+      setPostsNextCursor(data.nextCursor ?? null);
+      setPostsHasMore(data.hasMore === true);
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "추가 로드 실패");
+    } finally {
+      setLoadingMorePosts(false);
+    }
+  }, [activeTab, postsNextCursor]);
 
   useEffect(() => {
     if (!bootstrapped) return;
@@ -724,13 +781,35 @@ export function PostboxClient() {
           {!loading && !fetchError && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #f1f5f9", gap: 12 }}>
               <span style={{ fontSize: 13, color: "#94a3b8" }}>
-                총 {filtered.length.toLocaleString()}건
+                {activeTab === "admin" && postsHasMore
+                  ? `불러온 ${filtered.length.toLocaleString()}건 · 서버에 더 있음`
+                  : `총 ${filtered.length.toLocaleString()}건`}
                 {selected.size > 0 && (
                   <span style={{ marginLeft: 8, color: "#0f172a", fontWeight: 600 }}>
                     ({selected.size}개 선택)
                   </span>
                 )}
               </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {activeTab === "admin" && postsHasMore ? (
+                  <button
+                    type="button"
+                    onClick={() => void loadMorePosts()}
+                    disabled={loadingMorePosts}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      background: loadingMorePosts ? "#f1f5f9" : "#fff",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "#334155",
+                      cursor: loadingMorePosts ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {loadingMorePosts ? "불러오는 중…" : "추가로 불러오기"}
+                  </button>
+                ) : null}
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <PageBtn onClick={() => setPage(1)} disabled={page === 1} label="«" />
                 <PageBtn onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} label="‹" />
@@ -739,6 +818,7 @@ export function PostboxClient() {
                 ))}
                 <PageBtn onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} label="›" />
                 <PageBtn onClick={() => setPage(totalPages)} disabled={page === totalPages} label="»" />
+              </div>
               </div>
               <select
                 value={pageSize}
