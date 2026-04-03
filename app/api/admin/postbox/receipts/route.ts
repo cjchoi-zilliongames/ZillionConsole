@@ -4,12 +4,8 @@ import type { DocumentData } from "firebase-admin/firestore";
 import { getFirestoreDb } from "@/lib/firebase-firestore";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
-import {
-  COLLECTION_GLOBAL_MAILS,
-  COLLECTION_PERSONAL_MAILS,
-  COLLECTION_PERSONAL_MAIL_DISPATCHES,
-} from "@/lib/firestore-mail-schema";
-import { downloadRecipientList } from "@/app/api/admin/postbox/posts/route";
+import { COLLECTION_GLOBAL_MAILS, COLLECTION_PERSONAL_MAILS } from "@/lib/firestore-mail-schema";
+import { getPersonalDispatchItem } from "@/lib/mail-dispatches-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -207,21 +203,12 @@ export async function GET(req: Request) {
         }
       }
     } else if (postId.startsWith("pm_")) {
-      const postSnap = await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId).get();
-      if (!postSnap.exists) {
+      const dispatch = await getPersonalDispatchItem(postId);
+      if (!dispatch) {
         return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
       }
       targetAudience = "specific";
-      const postData = postSnap.data()!;
-
-      // 수신자 목록: Storage 기반(신규) 또는 레거시 recipientUids 맵
-      let recipientEntries: Array<{ uid: string; displayName: string }>;
-      if (typeof postData.recipientListPath === "string" && postData.recipientListPath) {
-        recipientEntries = await downloadRecipientList(postData.recipientListPath);
-      } else {
-        const recipientMap = (postData.recipientUids ?? {}) as Record<string, string>;
-        recipientEntries = Object.entries(recipientMap).map(([uid, displayName]) => ({ uid, displayName }));
-      }
+      const recipientEntries = dispatch.recipients;
 
       const uids = recipientEntries.map((r) => r.uid);
       const displayNames: Record<string, string> = Object.fromEntries(

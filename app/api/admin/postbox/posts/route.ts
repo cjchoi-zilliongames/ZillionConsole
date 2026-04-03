@@ -2,14 +2,18 @@ import { NextResponse } from "next/server";
 import type { DocumentData, Firestore } from "firebase-admin/firestore";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { getFirestoreDb } from "@/lib/firebase-firestore";
-import { getSpecBucket } from "@/lib/firebase-admin";
 import { bumpPostboxSignalServer } from "@/lib/firestore-postbox-signal-server";
+import {
+  appendPersonalDispatchItem,
+  listPersonalDispatchItems,
+  removePersonalDispatchItem,
+  type PersonalDispatchItem,
+} from "@/lib/mail-dispatches-storage";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
 import {
   COLLECTION_GLOBAL_MAILS,
   COLLECTION_PERSONAL_MAILS,
-  COLLECTION_PERSONAL_MAIL_DISPATCHES,
   type MailRewardStored,
   type PersonalListEntry,
 } from "@/lib/firestore-mail-schema";
@@ -31,7 +35,7 @@ export type RewardEntry = {
 };
 
 /** 관리자 API용 — 실제 저장소 구분 */
-export type MailStorageKind = "global_mails" | "personal_mail_dispatches";
+export type MailStorageKind = "global_mails" | "personal_mails_json";
 
 export type PostDoc = {
   postId: string;
@@ -44,12 +48,9 @@ export type PostDoc = {
   expiresAt: string;
   rewards: RewardEntry[];
   targetAudience: PostTargetAudience;
-  /** Storage 기반 발송: 비어있음. 레거시 발송: uid→displayName 맵 */
+  /** 개인 우편: 단일 JSON 내 recipients에서 채움. 전체 우편: 빈 객체 */
   recipientUids: PostRecipientUidMap;
-  /** 수신자 수 (Storage/레거시 모두 공통) */
   recipientCount: number;
-  /** Storage 수신자 목록 경로. 레거시 문서는 빈 문자열 */
-  recipientListPath: string;
   mailStorage: MailStorageKind;
 };
 
@@ -162,48 +163,29 @@ function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
     targetAudience: "all",
     recipientUids: {},
     recipientCount: 0,
-    recipientListPath: "",
     mailStorage: "global_mails",
   };
 }
 
-function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
-  // Storage 기반 (신규)
-  if (typeof d.recipientListPath === "string" && d.recipientListPath) {
-    return {
-      postId: id,
-      postType: "Admin",
-      title: String(d.title ?? ""),
-      content: String(d.content ?? ""),
-      sender: String(d.sender ?? ""),
-      isActive: d.isActive !== false,
-      createdAt: tsToIso(d.createdAt),
-      expiresAt: tsToIso(d.expiresAt),
-      rewards: storedToRewards(d.rewards),
-      targetAudience: "specific",
-      recipientUids: {},
-      recipientCount: typeof d.recipientCount === "number" ? d.recipientCount : 0,
-      recipientListPath: d.recipientListPath,
-      mailStorage: "personal_mail_dispatches",
-    };
+function personalItemToPostDoc(item: PersonalDispatchItem): PostDoc {
+  const recipientUids: PostRecipientUidMap = {};
+  for (const r of item.recipients) {
+    recipientUids[r.uid] = r.displayName;
   }
-  // 레거시 (recipientUids 맵)
-  const recipientMap = normalizeRecipientMapFromDoc(d.recipientUids);
   return {
-    postId: id,
+    postId: item.postId,
     postType: "Admin",
-    title: String(d.title ?? ""),
-    content: String(d.content ?? ""),
-    sender: String(d.sender ?? ""),
-    isActive: d.isActive !== false,
-    createdAt: tsToIso(d.createdAt),
-    expiresAt: tsToIso(d.expiresAt),
-    rewards: storedToRewards(d.rewards),
+    title: item.title,
+    content: item.content,
+    sender: item.sender,
+    isActive: item.isActive,
+    createdAt: item.createdAt,
+    expiresAt: item.expiresAt,
+    rewards: storedToRewards(item.rewards),
     targetAudience: "specific",
-    recipientUids: recipientMap,
-    recipientCount: Object.keys(recipientMap).length,
-    recipientListPath: "",
-    mailStorage: "personal_mail_dispatches",
+    recipientUids,
+    recipientCount: item.recipientCount,
+    mailStorage: "personal_mails_json",
   };
 }
 
@@ -220,14 +202,14 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, posts: [] as PostDoc[] });
     }
 
-    const [globalSnap, dispatchSnap] = await Promise.all([
+    const [globalSnap, personalItems] = await Promise.all([
       db.collection(COLLECTION_GLOBAL_MAILS).limit(500).get(),
-      db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).limit(500).get(),
+      listPersonalDispatchItems(),
     ]);
 
     const posts: PostDoc[] = [
       ...globalSnap.docs.map((doc) => docToPostDocGlobal(doc.id, doc.data())),
-      ...dispatchSnap.docs.map((doc) => docToPostDocDispatch(doc.id, doc.data())),
+      ...personalItems.map(personalItemToPostDoc),
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return NextResponse.json({ ok: true, posts });
@@ -239,23 +221,6 @@ export async function GET(req: Request) {
 // ── POST ──────────────────────────────────────────────────────────────────────
 
 type RecipientEntry = { uid: string; displayName: string };
-const RECIPIENT_STORAGE_PREFIX = "mail-dispatches";
-
-async function uploadRecipientList(mailId: string, recipients: RecipientEntry[]): Promise<string> {
-  const path = `${RECIPIENT_STORAGE_PREFIX}/${mailId}/recipients.json`;
-  const file = getSpecBucket().file(path);
-  await file.save(JSON.stringify(recipients), { contentType: "application/json" });
-  return path;
-}
-
-export async function downloadRecipientList(path: string): Promise<RecipientEntry[]> {
-  const [content] = await getSpecBucket().file(path).download();
-  return JSON.parse(content.toString()) as RecipientEntry[];
-}
-
-async function deleteRecipientList(path: string): Promise<void> {
-  await getSpecBucket().file(path).delete({ ignoreNotFound: true });
-}
 
 /** personal_list에 항목 추가 — FieldValue.arrayUnion으로 500건씩 batch */
 async function writePersonalListBatch(
@@ -342,25 +307,34 @@ export async function POST(req: Request) {
 
     const mailId = makePersonalMailId();
 
-    // 수신자 목록 → Storage
     const recipients: RecipientEntry[] = uids.map((uid) => ({
       uid,
       displayName: rawMap[uid] ?? "",
     }));
-    const recipientListPath = await uploadRecipientList(mailId, recipients);
 
-    // dispatch 문서 (수신자 목록은 Storage 경로만)
-    await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set({
+    const dispatchItem: PersonalDispatchItem = {
+      postId: mailId,
       title,
       content,
       sender: senderStr,
-      isActive: true,
-      createdAt: Timestamp.fromDate(now),
-      expiresAt: Timestamp.fromDate(expiresDate),
       rewards: storedRewards,
-      recipientListPath,
+      expiresAt: expiresDate.toISOString(),
+      createdAt: now.toISOString(),
+      isActive: true,
       recipientCount: uids.length,
-    });
+      recipients,
+    };
+    try {
+      await appendPersonalDispatchItem(dispatchItem);
+    } catch (e) {
+      if (e instanceof Error && e.message === "DUPLICATE_POST_ID") {
+        return NextResponse.json(
+          { ok: false, error: "우편 ID가 겹쳤습니다. 잠시 후 다시 시도해 주세요." },
+          { status: 409 }
+        );
+      }
+      throw e;
+    }
 
     // 유저별 personal_list에 500건씩 batch 추가
     const listEntry: PersonalListEntry = {
@@ -424,7 +398,7 @@ async function removeGlobalMailFromPersonalData(
 
 function mailStorageFromPostId(postId: string): MailStorageKind | null {
   if (postId.startsWith("gm_")) return "global_mails";
-  if (postId.startsWith("pm_")) return "personal_mail_dispatches";
+  if (postId.startsWith("pm_")) return "personal_mails_json";
   return null;
 }
 
@@ -481,22 +455,14 @@ export async function DELETE(req: Request) {
         await removeGlobalMailFromPersonalData(db, postId);
         continue;
       }
-      const dRef = db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId);
-      const dSnap = await dRef.get();
-      if (dSnap.exists) {
-        const data = dSnap.data()!;
-        // Storage 기반 (신규)
-        if (typeof data.recipientListPath === "string" && data.recipientListPath) {
-          const recipients = await downloadRecipientList(data.recipientListPath);
-          await removePersonalListBatch(db, recipients.map((r) => r.uid), postId);
-          await deleteRecipientList(data.recipientListPath);
-        } else {
-          // 레거시 (recipientUids 맵)
-          const recipientMap = normalizeRecipientMapFromDoc(data.recipientUids);
-          await removePersonalListBatch(db, Object.keys(recipientMap), postId);
-        }
+      const removed = await removePersonalDispatchItem(postId);
+      if (removed) {
+        await removePersonalListBatch(
+          db,
+          removed.recipients.map((r) => r.uid),
+          postId
+        );
       }
-      await dRef.delete();
     }
 
     await bumpPostboxSignalServer(db);
