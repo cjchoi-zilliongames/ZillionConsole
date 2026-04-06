@@ -1410,7 +1410,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 1 }}>
-                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 16 }}>닉네임</th>
+                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 24 }}>닉네임</th>
                   <th style={{ ...rThStyle, textAlign: "left" }}>UID</th>
                   <th style={{ ...rThStyle, textAlign: "left" }}>아이템</th>
                   <th style={{ ...rThStyle, textAlign: "center" }}>개수</th>
@@ -1431,7 +1431,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                         key={r.uid}
                         style={{ borderBottom: "1px solid #f3f4f6" }}
                       >
-                        <td style={{ ...rTdStyle, paddingLeft: 16, fontWeight: 500, color: "#111827" }}>
+                        <td style={{ ...rTdStyle, paddingLeft: 24, fontWeight: 500, color: "#111827" }}>
                           {r.displayName || <span style={{ color: "#d1d5db" }}>—</span>}
                         </td>
                         <td style={{ ...rTdStyle }}>
