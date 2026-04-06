@@ -1,0 +1,11 @@
+feat(postbox): replace mail type selector with dispatch schedule (immediate / scheduled / repeat)
+
+- PostRegisterModal: swap 우편 유형 UI for 발송일 section with three modes
+  - 즉시 발송: sends immediately via existing POST /api/admin/postbox/posts
+  - 예약 발송: datetime-local picker (future only), registers a one-shot schedule job
+  - 반복 발송: weekday checkboxes + UTC time picker, registers a recurring schedule job
+- Expiry preset hides 직접 입력 for non-immediate modes; shows relative description instead
+- Add POST/GET/DELETE /api/admin/postbox/schedule: stores mail_schedule_jobs in Firestore
+- Add GET /api/cron/postbox-dispatch: dispatches pending jobs whose nextRunAt has passed,
+  uses Firestore transaction to prevent double-send, resets nextRunAt for repeat jobs
+- Add vercel.json with cron schedule (* * * * *) to invoke the dispatch endpoint every minute

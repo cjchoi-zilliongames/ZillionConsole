@@ -10,7 +10,7 @@ import {
   type FormEvent,
   type MouseEvent,
 } from "react";
-import type { PostType, RewardEntry } from "@/app/api/admin/postbox/posts/route";
+import type { RewardEntry } from "@/app/api/admin/postbox/posts/route";
 import type { MailLocaleEntry } from "@/lib/firestore-mail-schema";
 import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
 import type { PostboxChartInfo } from "@/app/api/storage/chart-postbox-flags/route";
@@ -50,7 +50,6 @@ function langLabel(code: string): string {
 }
 
 type Props = {
-  defaultPostType: PostType;
   onClose: () => void;
   onCreated: () => void;
 };
@@ -142,17 +141,18 @@ function headersRowToMap(headers: string[], row: string[]): Record<string, strin
 }
 
 
-const POST_TYPE_LABELS: Record<PostType, string> = {
-  Admin: "관리자 우편",
-  Repeat: "반복 우편",
-  User: "유저 우편",
-  Leaderboard: "리더보드 보상",
+type DispatchType = "immediate" | "scheduled" | "repeat";
+type RepeatDay = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
+
+const REPEAT_DAY_LABELS: Record<RepeatDay, string> = {
+  Mon: "월", Tue: "화", Wed: "수", Thu: "목", Fri: "금", Sat: "토", Sun: "일",
 };
+const ALL_REPEAT_DAYS: RepeatDay[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const COMING_SOON_POST_TYPES = new Set<PostType>(["Repeat", "User", "Leaderboard"]);
-
-function normalizeDefaultPostType(t: PostType): PostType {
-  return COMING_SOON_POST_TYPES.has(t) ? "Admin" : t;
+function addMinutes(minutes: number): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + minutes);
+  return d.toISOString().slice(0, 16);
 }
 
 // ── User Picker Modal ─────────────────────────────────────────────────────────
@@ -984,9 +984,11 @@ function RewardDetailModal({ reward, onClose }: { reward: RewardItem; onClose: (
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
-export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props) {
-  const [postType, setPostType] = useState<PostType>(() => normalizeDefaultPostType(defaultPostType));
-  const [comingSoonPtr, setComingSoonPtr] = useState<{ x: number; y: number } | null>(null);
+export function PostRegisterModal({ onClose, onCreated }: Props) {
+  const [dispatchType, setDispatchType] = useState<DispatchType>("immediate");
+  const [scheduledAt, setScheduledAt] = useState<string>(() => addHours(1));
+  const [repeatDays, setRepeatDays] = useState<RepeatDay[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
+  const [repeatTime, setRepeatTime] = useState<string>("09:00");
   const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("ko", true), makeLangRow("en", false)]);
   const [langActiveId, setLangActiveId] = useState<string | null>(null);
   const [sender, setSender] = useState("운영팀");
@@ -1129,7 +1131,6 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
     setRewards((prev) => prev.map((r) => r.id === id ? { ...r, count: Math.max(1, count) } : r));
   }
 
-  // expiresAt 계산
   function computeExpiresAt(): string {
     switch (expiryPreset) {
       case "1":    return addHours(24);
@@ -1140,12 +1141,29 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
     }
   }
 
+  function computeExpiresAfterMs(): number {
+    switch (expiryPreset) {
+      case "1":  return 24 * 60 * 60 * 1000;
+      case "7":  return 7 * 24 * 60 * 60 * 1000;
+      case "15": return 15 * 24 * 60 * 60 * 1000;
+      case "30": return 30 * 24 * 60 * 60 * 1000;
+      case "custom": return 7 * 24 * 60 * 60 * 1000;
+    }
+  }
+
   const handleSubmit = useCallback(async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (COMING_SOON_POST_TYPES.has(postType)) {
-      setError("해당 우편 유형은 아직 등록할 수 없습니다.");
+    if (dispatchType === "scheduled") {
+      const scheduledDate = new Date(scheduledAt);
+      if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
+        setError("예약 발송 시각은 현재 시각보다 미래여야 합니다.");
+        return;
+      }
+    }
+    if (dispatchType === "repeat" && repeatDays.length === 0) {
+      setError("반복 발송할 요일을 최소 하나 선택해 주세요.");
       return;
     }
 
@@ -1181,26 +1199,53 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
 
     setSubmitting(true);
     try {
-      const res = await authFetch("/api/admin/postbox/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          postType,
-          title: fallbackRow.title.trim(),
-          content: fallbackRow.content,
-          localeContents,
-          sender: sender.trim() || "운영팀",
-          expiresAt: new Date(computeExpiresAt()).toISOString(),
-          rewards: rewardEntries,
-          targetAudience: audienceMode === "specific" ? "specific" : "all",
-          recipientUids:
-            audienceMode === "specific"
-              ? Object.fromEntries(pickedUsers.map((p) => [p.uid, p.label]))
-              : undefined,
-        }),
-      });
-      const data = await res.json() as { ok: boolean; error?: string };
-      if (!data.ok) throw new Error(data.error ?? "등록 실패");
+      if (dispatchType === "immediate") {
+        const res = await authFetch("/api/admin/postbox/posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            postType: "Admin",
+            title: fallbackRow.title.trim(),
+            content: fallbackRow.content,
+            localeContents,
+            sender: sender.trim() || "운영팀",
+            expiresAt: new Date(computeExpiresAt()).toISOString(),
+            rewards: rewardEntries,
+            targetAudience: audienceMode === "specific" ? "specific" : "all",
+            recipientUids:
+              audienceMode === "specific"
+                ? Object.fromEntries(pickedUsers.map((p) => [p.uid, p.label]))
+                : undefined,
+          }),
+        });
+        const data = await res.json() as { ok: boolean; error?: string };
+        if (!data.ok) throw new Error(data.error ?? "등록 실패");
+      } else {
+        const res = await authFetch("/api/admin/postbox/schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dispatchType,
+            scheduledAt: dispatchType === "scheduled" ? new Date(scheduledAt).toISOString() : undefined,
+            repeatDays: dispatchType === "repeat" ? repeatDays : undefined,
+            repeatTime: dispatchType === "repeat" ? repeatTime : undefined,
+            postType: "Admin",
+            title: fallbackRow.title.trim(),
+            content: fallbackRow.content,
+            localeContents,
+            sender: sender.trim() || "운영팀",
+            expiresAfterMs: computeExpiresAfterMs(),
+            rewards: rewardEntries,
+            targetAudience: audienceMode === "specific" ? "specific" : "all",
+            recipientUids:
+              audienceMode === "specific"
+                ? Object.fromEntries(pickedUsers.map((p) => [p.uid, p.label]))
+                : undefined,
+          }),
+        });
+        const data = await res.json() as { ok: boolean; error?: string };
+        if (!data.ok) throw new Error(data.error ?? "등록 실패");
+      }
       void signalPostboxChange();
       onCreated();
     } catch (err) {
@@ -1209,7 +1254,8 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
       setSubmitting(false);
     }
   }, [
-    postType, langRows, sender, expiryPreset, customExpiry,
+    dispatchType, scheduledAt, repeatDays, repeatTime,
+    langRows, sender, expiryPreset, customExpiry,
     rewards, audienceMode, pickedUsers, onCreated,
   ]);
 
@@ -1228,29 +1274,6 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
       <AdminGlobalLoadingOverlay
         message={postboxChartsLoading ? ADMIN_DATA_LOADING_MESSAGE : null}
       />
-      {comingSoonPtr ? (
-        <div
-          role="tooltip"
-          style={{
-            position: "fixed",
-            left: comingSoonPtr.x,
-            top: comingSoonPtr.y,
-            zIndex: 20000,
-            pointerEvents: "none",
-            fontSize: 11,
-            lineHeight: 1.3,
-            padding: "5px 8px",
-            borderRadius: 6,
-            background: "#1e293b",
-            color: "#f8fafc",
-            boxShadow: "0 4px 14px rgba(15,23,42,0.25)",
-            whiteSpace: "nowrap",
-            fontWeight: 500,
-          }}
-        >
-          추후 개발 예정
-        </div>
-      ) : null}
 
       <div
         style={{
@@ -1284,51 +1307,119 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: "20px 24px 24px" }}>
-          {/* 우편 유형 */}
-          <FormRow label="우편 유형">
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {(["Admin", "Repeat", "User", "Leaderboard"] as PostType[]).map((t) => {
-                const soon = COMING_SOON_POST_TYPES.has(t);
-                return (
-                  <ToggleBtn
-                    key={t}
-                    active={postType === t}
-                    disabled={soon}
-                    onClick={() => setPostType(t)}
-                    onMouseMove={
-                      soon
-                        ? (e: MouseEvent<HTMLButtonElement>) => {
-                            setComingSoonPtr({ x: e.clientX + 12, y: e.clientY + 14 });
-                          }
-                        : undefined
-                    }
-                    onMouseLeave={soon ? () => setComingSoonPtr(null) : undefined}
-                  >
-                    {POST_TYPE_LABELS[t]}
-                  </ToggleBtn>
-                );
-              })}
+          {/* 발송일 */}
+          <FormRow label="발송일" required>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: dispatchType !== "immediate" ? 12 : 0 }}>
+              <ToggleBtn active={dispatchType === "immediate"} onClick={() => setDispatchType("immediate")}>
+                즉시 발송
+              </ToggleBtn>
+              <ToggleBtn active={dispatchType === "scheduled"} onClick={() => {
+                setDispatchType("scheduled");
+                if (expiryPreset === "custom") setExpiryPreset("7");
+              }}>
+                예약 발송
+              </ToggleBtn>
+              <ToggleBtn active={dispatchType === "repeat"} onClick={() => {
+                setDispatchType("repeat");
+                if (expiryPreset === "custom") setExpiryPreset("7");
+              }}>
+                반복 발송
+              </ToggleBtn>
             </div>
+            {dispatchType === "immediate" && (
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>등록 즉시 발송됩니다.</p>
+            )}
+            {dispatchType === "scheduled" && (
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4 }}>
+                  발송 시각 <span style={{ color: "#94a3b8", fontWeight: 400 }}>(현재 시각 이후만 설정 가능)</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  min={addMinutes(5)}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+            )}
+            {dispatchType === "repeat" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+                    발송 요일
+                  </label>
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    {ALL_REPEAT_DAYS.map((day) => {
+                      const isOn = repeatDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => setRepeatDays((prev) =>
+                            isOn ? prev.filter((d) => d !== day) : [...prev, day]
+                          )}
+                          style={{
+                            padding: "5px 11px",
+                            borderRadius: 6,
+                            border: isOn ? "1.5px solid #0f172a" : "1.5px solid #e2e8f0",
+                            background: isOn ? "#0f172a" : "#fff",
+                            color: isOn ? "#fff" : "#475569",
+                            fontWeight: isOn ? 700 : 500,
+                            fontSize: 13,
+                            cursor: "pointer",
+                            transition: "all 0.1s",
+                          }}
+                        >
+                          {REPEAT_DAY_LABELS[day]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4 }}>
+                    발송 시각 <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 11 }}>(UTC 기준)</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={repeatTime}
+                    onChange={(e) => setRepeatTime(e.target.value)}
+                    style={{ ...inputStyle, width: "auto", minWidth: 120 }}
+                  />
+                </div>
+              </div>
+            )}
           </FormRow>
 
           <Divider />
 
           {/* 만료기간 */}
           <FormRow label="만료기간" required>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: expiryPreset === "custom" ? 8 : 0 }}>
-              {([["1", "하루 이내"], ["7", "7일"], ["15", "15일"], ["30", "30일"], ["custom", "직접 입력"]] as [ExpiryPreset, string][]).map(([val, label]) => (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: expiryPreset === "custom" && dispatchType === "immediate" ? 8 : 4 }}>
+              {(["1", "7", "15", "30"] as ExpiryPreset[]).map((val) => (
                 <ToggleBtn key={val} active={expiryPreset === val} onClick={() => setExpiryPreset(val)}>
-                  {label}
+                  {val === "1" ? "하루 이내" : `${val}일`}
                 </ToggleBtn>
               ))}
+              {dispatchType === "immediate" && (
+                <ToggleBtn active={expiryPreset === "custom"} onClick={() => setExpiryPreset("custom")}>
+                  직접 입력
+                </ToggleBtn>
+              )}
             </div>
-            {expiryPreset === "custom" && (
+            {expiryPreset === "custom" && dispatchType === "immediate" && (
               <input
                 type="datetime-local"
                 value={customExpiry}
                 onChange={(e) => setCustomExpiry(e.target.value)}
                 style={inputStyle}
               />
+            )}
+            {dispatchType !== "immediate" && (
+              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
+                발송 시각으로부터 {expiryPreset === "1" ? "하루" : `${expiryPreset}일`} 후 만료
+              </p>
             )}
           </FormRow>
 
@@ -1785,7 +1876,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
                 cursor: submitting ? "not-allowed" : "pointer",
               }}
             >
-              {submitting ? "등록 중…" : "확인"}
+              {submitting ? "등록 중…" : dispatchType === "immediate" ? "즉시 발송" : dispatchType === "scheduled" ? "예약 등록" : "반복 등록"}
             </button>
           </div>
         </form>

@@ -865,7 +865,6 @@ export function PostboxClient() {
       {/* Registration modal */}
       {showRegisterModal && (
         <PostRegisterModal
-          defaultPostType={TAB_POST_TYPE[activeTab]}
           onClose={() => setShowRegisterModal(false)}
           onCreated={async () => {
             setShowRegisterModal(false);
