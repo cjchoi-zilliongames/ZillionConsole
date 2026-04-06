@@ -886,12 +886,6 @@ export function PostboxClient() {
 
 // ── PostReceiptModal ─────────────────────────────────────────────────────────
 
-function formatDatetime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-}
-
 type ReceiptFilter = "all" | "claimed" | "dismissed" | "pending";
 
 const FILTER_META: Record<ReceiptFilter, { label: string; dot: string }> = {
@@ -1187,14 +1181,12 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                   <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 16 }}>표시명</th>
                   <th style={{ ...rThStyle, textAlign: "left" }}>UID</th>
                   <th style={{ ...rThStyle, textAlign: "center" }}>상태</th>
-                  <th style={{ ...rThStyle, textAlign: "center" }}>수령 일시</th>
-                  <th style={{ ...rThStyle, textAlign: "center" }}>삭제 일시</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ padding: "52px 0", textAlign: "center", color: "#d1d5db", fontSize: 13 }}>
+                    <td colSpan={4} style={{ padding: "52px 0", textAlign: "center", color: "#d1d5db", fontSize: 13 }}>
                       조회 결과가 없습니다.
                     </td>
                   </tr>
@@ -1219,12 +1211,6 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                         </td>
                         <td style={{ ...rTdStyle, textAlign: "center" }}>
                           <ReceiptStatusDot type={r.type} />
-                        </td>
-                        <td style={{ ...rTdStyle, textAlign: "center", fontVariantNumeric: "tabular-nums", color: r.claimedAt ? "#111827" : "#d1d5db", fontSize: 12 }}>
-                          {formatDatetime(r.claimedAt)}
-                        </td>
-                        <td style={{ ...rTdStyle, textAlign: "center", fontVariantNumeric: "tabular-nums", color: r.dismissedAt ? "#111827" : "#d1d5db", fontSize: 12 }}>
-                          {formatDatetime(r.dismissedAt)}
                         </td>
                       </tr>
                     );
