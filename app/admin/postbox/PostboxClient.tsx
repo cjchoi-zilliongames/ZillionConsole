@@ -122,6 +122,7 @@ export function PostboxClient() {
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedScheduleJobs, setSelectedScheduleJobs] = useState<Set<string>>(new Set());
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [receiptPost, setReceiptPost] = useState<PostDoc | null>(null);
   const [hoveredPostId, setHoveredPostId] = useState<string | null>(null);
@@ -314,6 +315,7 @@ export function PostboxClient() {
     setActiveTab(tab);
     setPage(1);
     setSelected(new Set());
+    setSelectedScheduleJobs(new Set());
     setSearch("");
   }
 
@@ -361,8 +363,53 @@ export function PostboxClient() {
     }
   }
 
+  function toggleScheduleRow(jobId: string) {
+    setSelectedScheduleJobs((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
+
+  function toggleAllSchedule() {
+    if (scheduleJobs.length === 0) return;
+    if (scheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId))) {
+      setSelectedScheduleJobs(new Set());
+      return;
+    }
+    setSelectedScheduleJobs(new Set(scheduleJobs.map((job) => job.jobId)));
+  }
+
+  async function handleCancelSelectedJobs() {
+    if (selectedScheduleJobs.size === 0) return;
+    if (!confirm(`선택한 반복/예약 우편 ${selectedScheduleJobs.size}개를 취소하시겠습니까?`)) return;
+    try {
+      const targets = scheduleJobs.filter((job) => selectedScheduleJobs.has(job.jobId));
+      await Promise.all(
+        targets
+          .filter((job) => !["cancelled", "done"].includes(job.status))
+          .map(async (job) => {
+            const res = await authFetch("/api/admin/postbox/schedule", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jobId: job.jobId }),
+            });
+            const data = await res.json() as { ok: boolean; error?: string };
+            if (!data.ok) throw new Error(data.error ?? "취소 실패");
+          })
+      );
+      setSelectedScheduleJobs(new Set());
+      await fetchScheduleJobs();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "오류가 발생했습니다.");
+    }
+  }
+
   const allPageSelected = pageItems.length > 0 && pageItems.every((item) => selected.has(item.postId));
   const somePageSelected = pageItems.some((item) => selected.has(item.postId));
+  const allScheduleSelected = scheduleJobs.length > 0 && scheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId));
+  const someScheduleSelected = scheduleJobs.some((job) => selectedScheduleJobs.has(job.jobId));
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -401,6 +448,22 @@ export function PostboxClient() {
               }}
             >
               삭제{selected.size > 0 ? ` (${selected.size})` : ""}
+            </button>
+          )}
+          {activeTab === "repeat" && (
+            <button
+              type="button"
+              onClick={() => { void handleCancelSelectedJobs(); }}
+              disabled={selectedScheduleJobs.size === 0}
+              style={{
+                padding: "8px 18px", borderRadius: 8, border: "1px solid #e2e8f0",
+                background: selectedScheduleJobs.size === 0 ? "#f8fafc" : "#fff",
+                color: selectedScheduleJobs.size === 0 ? "#94a3b8" : "#ef4444",
+                fontWeight: 600, fontSize: 13,
+                cursor: selectedScheduleJobs.size === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              취소{selectedScheduleJobs.size > 0 ? ` (${selectedScheduleJobs.size})` : ""}
             </button>
           )}
           {/* Search */}
@@ -499,67 +562,220 @@ export function PostboxClient() {
           {/* Schedule Jobs Table (반복/예약 탭) */}
           {activeTab === "repeat" && !scheduleLoading && !scheduleError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <table style={{ width: "100%", minWidth: postTableMinW, tableLayout: "fixed", borderCollapse: "collapse", fontSize: 13 }}>
+                <colgroup>
+                  <col style={{ width: postColW[0] }} />
+                  <col style={{ width: postColW[1] }} />
+                  <col style={{ width: postColW[2] }} />
+                  <col style={{ width: postColW[3] }} />
+                  <col style={{ width: postColW[4] }} />
+                  <col style={{ width: postColW[5] }} />
+                  <col style={{ width: postColW[6] }} />
+                  <col style={{ width: postColW[7] }} />
+                  <col style={{ width: postColW[8] }} />
+                </colgroup>
                 <thead>
                   <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e5e7eb" }}>
-                    {["번호", "타입", "제목", "발송인", "대상", "다음 실행", "요일/시각", "실행 횟수", "상태", ""].map((h) => (
-                      <th key={h} style={{ padding: "10px 14px", textAlign: h === "번호" ? "center" : "left", fontWeight: 600, fontSize: 12, color: "#64748b", whiteSpace: "nowrap", borderBottom: "1px solid #e5e7eb" }}>
-                        {h}
-                      </th>
-                    ))}
+                    <th
+                      style={{
+                        ...thStyle,
+                        ...adminListColBox(postColW[0]!),
+                        padding: postTbl.checkboxThPadding,
+                        textAlign: "center",
+                        verticalAlign: "middle",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div style={checkboxCellInner}>
+                        <input
+                          type="checkbox"
+                          checked={allScheduleSelected}
+                          ref={(el) => { if (el) el.indeterminate = someScheduleSelected && !allScheduleSelected; }}
+                          onChange={toggleAllSchedule}
+                          style={tableCheckboxInputStyle}
+                          aria-label="반복 우편 전체 선택"
+                        />
+                      </div>
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[0]!}
+                        onMouseDown={(e) => startPostColResize(0, e.clientX)}
+                      />
+                    </th>
+                    <th
+                      style={{
+                        ...thStyle,
+                        ...adminListColBox(postColW[1]!),
+                        textAlign: "center",
+                        padding: postTbl.numberThPadding,
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      번호
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[1]!}
+                        onMouseDown={(e) => startPostColResize(1, e.clientX)}
+                      />
+                    </th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.title.th),
+                        ...adminListColBox(postColW[2]!),
+                        textAlign: "left",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      제목
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[2]!}
+                        onMouseDown={(e) => startPostColResize(2, e.clientX)}
+                      />
+                    </th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.target.th),
+                        ...adminListColBox(postColW[3]!),
+                        textAlign: "center",
+                      }}
+                    >
+                      대상
+                    </th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.sender.th),
+                        ...adminListColBox(postColW[4]!),
+                        textAlign: "center",
+                      }}
+                    >
+                      수신 인원
+                    </th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.reward.th),
+                        ...adminListColBox(postColW[5]!),
+                        textAlign: "center",
+                      }}
+                    >
+                      반복 조건
+                    </th>
+                    <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>발송일</th>
+                    <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>만료일</th>
+                    <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>상태</th>
                   </tr>
                 </thead>
                 <tbody>
                   {scheduleJobs.length === 0 ? (
                     <tr>
-                      <td colSpan={10} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
+                      <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
                         등록된 예약/반복 우편이 없습니다.
                       </td>
                     </tr>
                   ) : (
                     scheduleJobs.map((job, idx) => {
                       const isCancelled = job.status === "cancelled";
-                      const isDone = job.status === "done";
-                      const statusColor = isCancelled ? "#94a3b8" : isDone ? "#059669" : job.status === "failed" ? "#ef4444" : job.status === "processing" ? "#3b82f6" : "#f59e0b";
+                      const statusColor = isCancelled ? "#94a3b8" : job.status === "done" ? "#059669" : job.status === "failed" ? "#ef4444" : job.status === "processing" ? "#3b82f6" : "#f59e0b";
                       const statusLabel = { pending: "대기", processing: "처리중", done: "완료", cancelled: "취소됨", failed: "실패" }[job.status] ?? job.status;
                       const repeatDayLabel = job.repeatDays ? job.repeatDays.map((d) => ({ Mon:"월",Tue:"화",Wed:"수",Thu:"목",Fri:"금",Sat:"토",Sun:"일" })[d]).join(" ") : "—";
+                      const recipientCount = job.targetAudience === "specific" ? Object.keys(job.recipientUids ?? {}).length : null;
+                      const sendAt = job.nextRunAt ? new Date(job.nextRunAt) : null;
+                      const expireAt = sendAt && job.expiresAfterMs ? new Date(sendAt.getTime() + job.expiresAfterMs) : null;
+                      const repeatCondition = job.type === "repeat"
+                        ? `${repeatDayLabel}${job.repeatTime ? ` ${job.repeatTime}` : ""}`
+                        : "1회 예약";
+                      const isSelected = selectedScheduleJobs.has(job.jobId);
                       return (
                         <tr key={job.jobId} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#fff" : "#fafafa" }}>
-                          <td style={{ padding: "10px 14px", textAlign: "center", color: "#94a3b8", fontSize: 11 }}>{idx + 1}</td>
-                          <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                            <span style={{
-                              display: "inline-block", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-                              background: job.type === "repeat" ? "rgba(59,130,246,0.1)" : "rgba(245,158,11,0.1)",
-                              color: job.type === "repeat" ? "#3b82f6" : "#f59e0b",
-                            }}>
-                              {job.type === "repeat" ? "반복" : "예약"}
-                            </span>
+                          <td
+                            style={{
+                              ...tdStyle,
+                              ...adminListColBox(postColW[0]!),
+                              padding: postTbl.checkboxTdPadding,
+                              textAlign: "center",
+                              verticalAlign: "middle",
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div style={checkboxCellInner}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleScheduleRow(job.jobId)}
+                                style={tableCheckboxInputStyle}
+                                aria-label={`반복 우편 ${job.title} 선택`}
+                              />
+                            </div>
                           </td>
-                          <td style={{ padding: "10px 14px", fontWeight: 600, color: "#1e293b", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job.title}</td>
-                          <td style={{ padding: "10px 14px", color: "#475569" }}>{job.sender || "—"}</td>
-                          <td style={{ padding: "10px 14px", color: "#475569", fontSize: 12 }}>{job.targetAudience === "specific" ? "지정" : "전체"}</td>
+                          <td
+                            style={{
+                              ...tdStyle,
+                              ...adminListColBox(postColW[1]!),
+                              textAlign: "center",
+                              color: "#94a3b8",
+                              fontSize: 11,
+                              padding: postTbl.numberTdPadding,
+                            }}
+                          >
+                            {(page - 1) * pageSize + idx + 1}
+                          </td>
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.title.td),
+                              ...adminListColBox(postColW[2]!),
+                              fontWeight: 600,
+                              color: "#1e293b",
+                              maxWidth: postTbl.titleMaxWidth,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {job.title}
+                          </td>
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.target.td),
+                              ...adminListColBox(postColW[3]!),
+                              textAlign: "center",
+                              color: "#475569",
+                              fontSize: 12,
+                            }}
+                          >
+                            {job.targetAudience === "specific" ? "지정" : "전체"}
+                          </td>
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.sender.td),
+                              ...adminListColBox(postColW[4]!),
+                              textAlign: "center",
+                              color: "#475569",
+                              fontSize: 12,
+                            }}
+                          >
+                            {recipientCount == null ? "전체" : `${recipientCount.toLocaleString()}명`}
+                          </td>
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.reward.td),
+                              ...adminListColBox(postColW[5]!),
+                              textAlign: "center",
+                              color: "#475569",
+                              fontSize: 12,
+                            }}
+                          >
+                            {repeatCondition}
+                          </td>
                           <td style={{ padding: "10px 14px", color: "#475569", fontSize: 12, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                            {job.nextRunAt ? new Date(job.nextRunAt).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+                            {sendAt ? sendAt.toLocaleDateString("ko-KR") : "—"}
                           </td>
-                          <td style={{ padding: "10px 14px", color: "#475569", fontSize: 12 }}>
-                            {job.type === "repeat" ? `${repeatDayLabel} ${job.repeatTime ?? ""}` : "—"}
+                          <td style={{ padding: "10px 14px", color: "#475569", fontSize: 12, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                            {expireAt ? expireAt.toLocaleDateString("ko-KR") : "—"}
                           </td>
-                          <td style={{ padding: "10px 14px", textAlign: "center", color: "#475569", fontSize: 12 }}>{job.runCount ?? 0}</td>
                           <td style={{ padding: "10px 14px" }}>
                             <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: `${statusColor}18`, color: statusColor }}>
                               {statusLabel}
                             </span>
-                          </td>
-                          <td style={{ padding: "10px 14px" }}>
-                            {!isCancelled && !isDone && (
-                              <button
-                                type="button"
-                                onClick={() => void handleCancelJob(job.jobId)}
-                                style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                              >
-                                취소
-                              </button>
-                            )}
                           </td>
                         </tr>
                       );
@@ -1407,11 +1623,18 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
             </div>
           )}
           {!error && data && (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 12 }}>
+              <colgroup>
+                <col style={{ width: "20%" }} />
+                <col style={{ width: "30%" }} />
+                <col style={{ width: "28%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "13%" }} />
+              </colgroup>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 1 }}>
-                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 24 }}>닉네임</th>
-                  <th style={{ ...rThStyle, textAlign: "left" }}>UID</th>
+                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 32 }}>닉네임</th>
+                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 16 }}>UID</th>
                   <th style={{ ...rThStyle, textAlign: "left" }}>아이템</th>
                   <th style={{ ...rThStyle, textAlign: "center" }}>개수</th>
                   <th style={{ ...rThStyle, textAlign: "center" }}>상태</th>
@@ -1431,15 +1654,35 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                         key={r.uid}
                         style={{ borderBottom: "1px solid #f3f4f6" }}
                       >
-                        <td style={{ ...rTdStyle, paddingLeft: 24, fontWeight: 500, color: "#111827" }}>
+                        <td
+                          style={{
+                            ...rTdStyle,
+                            paddingLeft: 32,
+                            fontWeight: 500,
+                            color: "#111827",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                          title={r.displayName}
+                        >
                           {r.displayName || <span style={{ color: "#d1d5db" }}>—</span>}
                         </td>
-                        <td style={{ ...rTdStyle }}>
+                        <td
+                          style={{
+                            ...rTdStyle,
+                            paddingLeft: 16,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                          title={r.uid}
+                        >
                           <span style={{ fontFamily: "monospace", fontSize: 11, color: "#4b5563" }}>
                             {r.uid}
                           </span>
                         </td>
-                        <td style={{ ...rTdStyle, color: "#4b5563", fontSize: 12 }}>
+                        <td style={{ ...rTdStyle, color: "#4b5563", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={rewardItemLabel}>
                           {rewardItemLabel}
                         </td>
                         <td style={{ ...rTdStyle, textAlign: "center", color: "#4b5563", fontSize: 12 }}>

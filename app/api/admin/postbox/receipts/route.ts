@@ -36,6 +36,14 @@ export type ReceiptsResponse = {
 
 const PAGE_SIZE = 100;
 
+function pickNickname(userDoc: DocumentData | undefined): string {
+  const nickname =
+    (userDoc?.UserInfo?.Nickname as string | undefined) ??
+    (userDoc?.UserInfo?.FS_UID as string | undefined) ??
+    "";
+  return nickname || "";
+}
+
 function toIso(val: unknown): string | null {
   if (!val) return null;
   if (val instanceof Timestamp) return val.toDate().toISOString();
@@ -165,7 +173,7 @@ export async function GET(req: Request) {
           const refs = searchUids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
           const snaps = await db.getAll(...refs);
           receipts = searchUids.map((uid, i) =>
-            receiptFromPersonalMailDoc(uid, searchNames[uid] || uid, snaps[i]?.data(), postId)
+            receiptFromPersonalMailDoc(uid, searchNames[uid] || "", snaps[i]?.data(), postId)
           );
         }
       } else {
@@ -202,7 +210,7 @@ export async function GET(req: Request) {
           const refs = uids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
           const snaps = await db.getAll(...refs);
           receipts = uids.map((uid, i) =>
-            receiptFromPersonalMailDoc(uid, displayNames[uid] || uid, snaps[i]?.data(), postId)
+            receiptFromPersonalMailDoc(uid, displayNames[uid] || "", snaps[i]?.data(), postId)
           );
         }
       }
@@ -231,11 +239,20 @@ export async function GET(req: Request) {
         const BATCH_SIZE = 500;
         for (let i = 0; i < uids.length; i += BATCH_SIZE) {
           const chunk = uids.slice(i, i + BATCH_SIZE);
-          const refs = chunk.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
-          const snaps = await db.getAll(...refs);
+          const mailRefs = chunk.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
+          const userRefs = chunk.map((uid) => db.collection("users").doc(uid));
+          const [mailSnaps, userSnaps] = await Promise.all([
+            db.getAll(...mailRefs),
+            db.getAll(...userRefs),
+          ]);
           receipts.push(
             ...chunk.map((uid, j) =>
-              receiptFromPersonalListEntry(uid, displayNames[uid] || uid, snaps[j]?.data(), postId)
+              receiptFromPersonalListEntry(
+                uid,
+                pickNickname(userSnaps[j]?.data()),
+                mailSnaps[j]?.data(),
+                postId
+              )
             )
           );
         }

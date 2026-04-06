@@ -186,6 +186,8 @@ export async function GET(req: Request) {
         title: d.title,
         sender: d.sender,
         targetAudience: d.targetAudience,
+        recipientUids: d.recipientUids,
+        expiresAfterMs: typeof d.expiresAfterMs === "number" ? d.expiresAfterMs : 7 * 24 * 60 * 60 * 1000,
         runCount: d.runCount ?? 0,
         createdAt: tsToIso(d.createdAt),
         lastRunAt: d.lastRunAt ? tsToIso(d.lastRunAt) : undefined,
