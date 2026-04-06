@@ -37,10 +37,7 @@ export type ReceiptsResponse = {
 const PAGE_SIZE = 100;
 
 function pickNickname(userDoc: DocumentData | undefined): string {
-  const nickname =
-    (userDoc?.UserInfo?.Nickname as string | undefined) ??
-    (userDoc?.UserInfo?.FS_UID as string | undefined) ??
-    "";
+  const nickname = (userDoc?.UserInfo?.Nickname as string | undefined) ?? "";
   return nickname || "";
 }
 
@@ -163,9 +160,7 @@ export async function GET(req: Request) {
         for (const d of searchDocs) {
           const dData = d.getData();
           searchNames[d.id] =
-            (dData?.UserInfo?.Nickname as string | undefined) ??
-            (dData?.UserInfo?.FS_UID as string | undefined) ??
-            "";
+            (dData?.UserInfo?.Nickname as string | undefined) ?? "";
         }
 
         total = searchUids.length;
@@ -201,9 +196,7 @@ export async function GET(req: Request) {
         for (const d of userDocs) {
           const data = d.data();
           displayNames[d.id] =
-            (data?.UserInfo?.Nickname as string | undefined) ??
-            (data?.UserInfo?.FS_UID as string | undefined) ??
-            "";
+            (data?.UserInfo?.Nickname as string | undefined) ?? "";
         }
 
         if (uids.length > 0) {

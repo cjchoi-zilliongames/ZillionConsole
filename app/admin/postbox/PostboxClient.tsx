@@ -74,6 +74,15 @@ const TAB_LABELS: { id: PostboxTab; label: string }[] = [
 const COMING_SOON_TABS = new Set<PostboxTab>(["user", "leaderboard"]);
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
+const RECEIPT_COL_STORAGE_KEY = "admin-postbox-receipt-col-widths-v1";
+const RECEIPT_COL_DEFAULTS = [220, 260, 220, 90, 120] as const;
+const RECEIPT_COL_MINS = [140, 180, 140, 70, 90] as const;
+const RECEIPT_COL_RESIZE_LABELS = [
+  "닉네임 열과 UID 열 사이 너비 조절",
+  "UID 열과 아이템 열 사이 너비 조절",
+  "아이템 열과 개수 열 사이 너비 조절",
+  "개수 열과 상태 열 사이 너비 조절",
+] as const;
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -1290,6 +1299,15 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
 
   const overlayRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const {
+    widths: receiptColW,
+    totalWidth: receiptTableMinW,
+    startResize: startReceiptColResize,
+  } = useResizableAdminTableColumns({
+    storageKey: RECEIPT_COL_STORAGE_KEY,
+    defaults: RECEIPT_COL_DEFAULTS,
+    mins: RECEIPT_COL_MINS,
+  });
 
   const isAll = data?.targetAudience === "all";
   const currentCursor = pagination.cursors[pagination.pageIdx] ?? null;
@@ -1375,14 +1393,23 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
     pending: data?.pending ?? 0,
   }), [data]);
 
+  const rewardItems = useMemo(
+    () => (post.rewards ?? []).map((reward) => `${reward.table}:${reward.row}`),
+    [post.rewards]
+  );
+
+  const rewardInlineText = useMemo(
+    () =>
+      (post.rewards ?? [])
+        .map((reward) => `${reward.table}:${reward.row}`)
+        .join(", "),
+    [post.rewards]
+  );
+
   const rewardItemLabel = useMemo(() => {
-    if (!post.rewards || post.rewards.length === 0) return "—";
-    if (post.rewards.length === 1) {
-      const reward = post.rewards[0];
-      return reward ? `${reward.table}:${reward.row}` : "—";
-    }
-    return `${post.rewards.length}종 보상`;
-  }, [post.rewards]);
+    if (rewardItems.length === 0) return "—";
+    return rewardItems[0] ?? "—";
+  }, [rewardItems]);
 
   const rewardCountLabel = useMemo(() => {
     if (!post.rewards || post.rewards.length === 0) return "—";
@@ -1507,7 +1534,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                       </span>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", columnGap: 16, padding: "5px 0", alignItems: "start" }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>내용</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>본문</span>
                       <span style={{ fontSize: 13, fontWeight: 500, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 }}>
                         {previewCurrent.content || "—"}
                       </span>
@@ -1524,7 +1551,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                   </span>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", columnGap: 16, padding: "5px 0", alignItems: "start" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>내용</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>본문</span>
                   <span style={{ fontSize: 13, fontWeight: 500, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 }}>
                     {post.content || "—"}
                   </span>
@@ -1623,21 +1650,43 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
             </div>
           )}
           {!error && data && (
-            <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 12 }}>
+            <table style={{ width: "100%", minWidth: receiptTableMinW, borderCollapse: "collapse", tableLayout: "fixed", fontSize: 12 }}>
               <colgroup>
-                <col style={{ width: "20%" }} />
-                <col style={{ width: "30%" }} />
-                <col style={{ width: "28%" }} />
-                <col style={{ width: "9%" }} />
-                <col style={{ width: "13%" }} />
+                {receiptColW.map((w, i) => (
+                  <col key={i} style={{ width: w }} />
+                ))}
               </colgroup>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 1 }}>
-                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 32 }}>닉네임</th>
-                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 16 }}>UID</th>
-                  <th style={{ ...rThStyle, textAlign: "left" }}>아이템</th>
-                  <th style={{ ...rThStyle, textAlign: "center" }}>개수</th>
-                  <th style={{ ...rThStyle, textAlign: "center" }}>상태</th>
+                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 56, position: "relative", overflow: "hidden" }}>
+                    닉네임
+                    <AdminTableResizeHandle
+                      ariaLabel={RECEIPT_COL_RESIZE_LABELS[0]!}
+                      onMouseDown={(e) => startReceiptColResize(0, e.clientX)}
+                    />
+                  </th>
+                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 16, position: "relative", overflow: "hidden" }}>
+                    UID
+                    <AdminTableResizeHandle
+                      ariaLabel={RECEIPT_COL_RESIZE_LABELS[1]!}
+                      onMouseDown={(e) => startReceiptColResize(1, e.clientX)}
+                    />
+                  </th>
+                  <th style={{ ...rThStyle, textAlign: "left", position: "relative", overflow: "hidden" }}>
+                    아이템
+                    <AdminTableResizeHandle
+                      ariaLabel={RECEIPT_COL_RESIZE_LABELS[2]!}
+                      onMouseDown={(e) => startReceiptColResize(2, e.clientX)}
+                    />
+                  </th>
+                  <th style={{ ...rThStyle, textAlign: "center", position: "relative", overflow: "hidden" }}>
+                    개수
+                    <AdminTableResizeHandle
+                      ariaLabel={RECEIPT_COL_RESIZE_LABELS[3]!}
+                      onMouseDown={(e) => startReceiptColResize(3, e.clientX)}
+                    />
+                  </th>
+                  <th style={{ ...rThStyle, textAlign: "center", paddingRight: 40 }}>상태</th>
                 </tr>
               </thead>
               <tbody>
@@ -1657,7 +1706,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                         <td
                           style={{
                             ...rTdStyle,
-                            paddingLeft: 32,
+                            paddingLeft: 56,
                             fontWeight: 500,
                             color: "#111827",
                             whiteSpace: "nowrap",
@@ -1682,13 +1731,23 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                             {r.uid}
                           </span>
                         </td>
-                        <td style={{ ...rTdStyle, color: "#4b5563", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={rewardItemLabel}>
-                          {rewardItemLabel}
+                        <td style={{ ...rTdStyle, color: "#4b5563", fontSize: 12 }}>
+                          <div
+                            title={rewardInlineText || "—"}
+                            style={{
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: "100%",
+                            }}
+                          >
+                            {rewardInlineText || "—"}
+                          </div>
                         </td>
                         <td style={{ ...rTdStyle, textAlign: "center", color: "#4b5563", fontSize: 12 }}>
                           {rewardCountLabel}
                         </td>
-                        <td style={{ ...rTdStyle, textAlign: "center" }}>
+                        <td style={{ ...rTdStyle, textAlign: "center", paddingRight: 40 }}>
                           <ReceiptStatusDot type={r.type} />
                         </td>
                       </tr>
