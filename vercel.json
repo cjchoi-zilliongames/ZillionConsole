@@ -1,8 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/postbox-dispatch",
-      "schedule": "* * * * *"
-    }
-  ]
+  "crons": []
 }
