@@ -1084,12 +1084,24 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
             <button
               type="button"
               onClick={onClose}
+              aria-label="닫기"
               style={{
-                flexShrink: 0, width: 30, height: 30, borderRadius: 6,
-                border: "1px solid #e5e7eb", background: "transparent",
-                color: "#6b7280", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 18, lineHeight: 1,
+                flexShrink: 0,
+                width: 44,
+                height: 44,
+                border: "none",
+                borderRadius: 8,
+                background: "transparent",
+                color: "#1f2937",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 32,
+                fontWeight: 300,
+                lineHeight: 1,
+                outline: "none",
+                padding: 0,
               }}
             >
               ×
