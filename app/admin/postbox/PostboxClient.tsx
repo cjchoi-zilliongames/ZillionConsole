@@ -1605,11 +1605,6 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
 
             {/* 검색 */}
             <div style={{ position: "relative", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              {isAll && (
-                <span style={{ fontSize: 11, color: "#9ca3af", whiteSpace: "nowrap" }}>
-                  {isSearchMode ? "전체 검색" : "페이지 내 필터"}
-                </span>
-              )}
               <div style={{ position: "relative" }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                   style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#9ca3af", pointerEvents: "none" }}>
@@ -1618,7 +1613,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                 </svg>
                 <input
                   type="text"
-                  placeholder={isAll ? "UID / 닉네임 접두사 검색" : "이름 또는 UID"}
+                  placeholder="닉네임 또는 UID"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   style={{
@@ -1658,7 +1653,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
               </colgroup>
               <thead>
                 <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 1 }}>
-                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 56, position: "relative", overflow: "hidden" }}>
+                  <th style={{ ...rThStyle, textAlign: "left", paddingLeft: 72, position: "relative", overflow: "hidden" }}>
                     닉네임
                     <AdminTableResizeHandle
                       ariaLabel={RECEIPT_COL_RESIZE_LABELS[0]!}
@@ -1706,7 +1701,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                         <td
                           style={{
                             ...rTdStyle,
-                            paddingLeft: 56,
+                            paddingLeft: 72,
                             fontWeight: 500,
                             color: "#111827",
                             whiteSpace: "nowrap",
