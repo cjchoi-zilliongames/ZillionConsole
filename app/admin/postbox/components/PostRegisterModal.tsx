@@ -11,6 +11,8 @@ import {
   type MouseEvent,
 } from "react";
 import type { PostType, RewardEntry } from "@/app/api/admin/postbox/posts/route";
+import type { MailLocaleEntry } from "@/lib/firestore-mail-schema";
+import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
 import type { PostboxChartInfo } from "@/app/api/storage/chart-postbox-flags/route";
 import { parseCsv } from "@/lib/spec/csv-parser";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
@@ -27,6 +29,25 @@ const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type ExpiryPreset = "1" | "7" | "15" | "30" | "custom";
+
+const MAX_MAIL_LANGS = 10;
+const MAX_MAIL_CONTENT = 500;
+
+type LangRow = {
+  id: string;
+  language: string;
+  title: string;
+  content: string;
+  fallback: boolean;
+};
+
+function makeLangRow(language: string, fallback: boolean): LangRow {
+  return { id: `${language}-${Math.random().toString(36).slice(2, 9)}`, language, title: "", content: "", fallback };
+}
+
+function langLabel(code: string): string {
+  return NOTICE_LANG_CATALOG.find((l) => l.code === code)?.label ?? code;
+}
 
 type Props = {
   defaultPostType: PostType;
@@ -966,8 +987,8 @@ function RewardDetailModal({ reward, onClose }: { reward: RewardItem; onClose: (
 export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props) {
   const [postType, setPostType] = useState<PostType>(() => normalizeDefaultPostType(defaultPostType));
   const [comingSoonPtr, setComingSoonPtr] = useState<{ x: number; y: number } | null>(null);
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("ko", true), makeLangRow("en", false)]);
+  const [langActiveId, setLangActiveId] = useState<string | null>(null);
   const [sender, setSender] = useState("운영팀");
 
   /** 전체 | 직접 입력( users/{uid} 기준 ) */
@@ -1031,6 +1052,51 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
     setPickedUsers((prev) => prev.filter((p) => p.uid !== uid));
   }
 
+  // ── 언어 관련 파생 & 헬퍼 ───────────────────────────────────────────────────
+
+  const langActiveRow = useMemo(() => {
+    const first = langRows[0];
+    if (!first) return null;
+    if (langActiveId) {
+      const found = langRows.find((r) => r.id === langActiveId);
+      if (found) return found;
+    }
+    return first;
+  }, [langRows, langActiveId]);
+
+  const addableLangs = useMemo(
+    () => NOTICE_LANG_CATALOG.filter((l) => !langRows.some((r) => r.language === l.code)),
+    [langRows],
+  );
+
+  function setLangField<K extends keyof LangRow>(id: string, key: K, value: LangRow[K]) {
+    setLangRows((prev) => prev.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
+  }
+
+  function setLangFallback(id: string) {
+    setLangRows((prev) => prev.map((r) => ({ ...r, fallback: r.id === id })));
+  }
+
+  function removeLangRow(id: string) {
+    setLangRows((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((r) => r.id !== id);
+      const removed = prev.find((r) => r.id === id);
+      if (removed?.fallback && next.length > 0) next[0] = { ...next[0]!, fallback: true };
+      if (langActiveId === id) setLangActiveId(next[0]?.id ?? null);
+      return next;
+    });
+  }
+
+  function addLangRow(code: string) {
+    if (langRows.length >= MAX_MAIL_LANGS) return;
+    const row = makeLangRow(code, false);
+    setLangRows((prev) => [...prev, row]);
+    setLangActiveId(row.id);
+  }
+
+  // ── 차트 관련 ─────────────────────────────────────────────────────────────
+
   function handleChartSelected(chart: PostboxChart) {
     setShowChartPicker(false);
     setItemKeyPickerTarget(chart);
@@ -1083,12 +1149,28 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
       return;
     }
 
-    if (!title.trim()) { setError("제목을 입력해 주세요."); return; }
-    if (!content.trim()) { setError("내용을 입력해 주세요."); return; }
+    const validRows = langRows.filter((r) => r.title.trim() && r.content.trim());
+    if (validRows.length === 0) {
+      setError("최소 하나의 언어에 제목과 내용을 입력해 주세요.");
+      return;
+    }
+    if (langRows.some((r) => !r.title.trim() || !r.content.trim())) {
+      setError("모든 언어에 제목과 내용을 입력해 주세요.");
+      return;
+    }
+
     if (audienceMode === "specific" && pickedUsers.length === 0) {
       setError("직접 발송일 때 수신 유저를 목록에서 선택해 추가하세요.");
       return;
     }
+
+    const fallbackRow = langRows.find((r) => r.fallback) ?? langRows[0]!;
+    const localeContents: MailLocaleEntry[] = langRows.map((r) => ({
+      language: r.language,
+      title: r.title.trim(),
+      content: r.content,
+      fallback: r.fallback,
+    }));
 
     const rewardEntries: RewardEntry[] = rewards.map((r) => ({
       table: r.tableName,
@@ -1104,8 +1186,9 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           postType,
-          title: title.trim(),
-          content: content.trim(),
+          title: fallbackRow.title.trim(),
+          content: fallbackRow.content,
+          localeContents,
           sender: sender.trim() || "운영팀",
           expiresAt: new Date(computeExpiresAt()).toISOString(),
           rewards: rewardEntries,
@@ -1126,7 +1209,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
       setSubmitting(false);
     }
   }, [
-    postType, title, content, sender, expiryPreset, customExpiry,
+    postType, langRows, sender, expiryPreset, customExpiry,
     rewards, audienceMode, pickedUsers, onCreated,
   ]);
 
@@ -1175,7 +1258,7 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
           background: "#fff",
           borderRadius: 14,
           width: "100%",
-          maxWidth: 640,
+          maxWidth: 860,
           maxHeight: "90vh",
           overflowY: "auto",
           boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
@@ -1252,29 +1335,141 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
 
           <Divider />
 
-          {/* 제목 */}
-          <FormRow label="제목" required>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="우편 제목을 입력하세요"
-              maxLength={100}
-              style={inputStyle}
-            />
-          </FormRow>
+          {/* 제목 / 내용 (다국어) */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+              제목 / 내용<span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
+            </label>
+            <div style={{
+              border: "1px solid #e2e8f0",
+              borderRadius: 10,
+              overflow: "hidden",
+              display: "grid",
+              gridTemplateColumns: "168px 1fr",
+              height: 340,
+            }}>
+              {/* 언어 사이드바 */}
+              <div style={{
+                borderRight: "1px solid #f1f5f9",
+                background: "#fafbfc",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}>
+                <div style={{
+                  padding: "8px 10px 6px",
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  fontSize: 11, fontWeight: 700, color: "#64748b",
+                  flexShrink: 0,
+                }}>
+                  <span>언어 ({langRows.length}/{MAX_MAIL_LANGS})</span>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px" }}>
+                  {langRows.map((r) => {
+                    const active = langActiveRow?.id === r.id;
+                    return (
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 5 }}>
+                        <button
+                          type="button"
+                          onClick={() => setLangActiveId(r.id)}
+                          style={{
+                            flex: 1, textAlign: "left", padding: "7px 9px", borderRadius: 9,
+                            border: active ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                            background: active ? "#eff6ff" : "#fff",
+                            cursor: "pointer", fontSize: 12, fontWeight: active ? 700 : 500,
+                            color: active ? "#1d4ed8" : "#334155",
+                          }}
+                        >
+                          {langLabel(r.language)}
+                        </button>
+                        <button
+                          type="button"
+                          title="대표 언어로 지정"
+                          onClick={() => setLangFallback(r.id)}
+                          style={{
+                            padding: "4px 6px", fontSize: 10, fontWeight: 700, borderRadius: 7,
+                            border: r.fallback ? "1px solid #2563eb" : "1px solid #e2e8f0",
+                            background: r.fallback ? "#dbeafe" : "#fff",
+                            color: r.fallback ? "#1d4ed8" : "#64748b",
+                            cursor: "pointer",
+                          }}
+                        >
+                          FB
+                        </button>
+                        <button
+                          type="button"
+                          title="언어 제거"
+                          disabled={langRows.length <= 1}
+                          onClick={() => removeLangRow(r.id)}
+                          style={{
+                            padding: 4, border: "none", background: "transparent",
+                            color: langRows.length <= 1 ? "#e2e8f0" : "#94a3b8",
+                            cursor: langRows.length <= 1 ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" />
+                          </svg>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ padding: "0 8px 10px", flexShrink: 0 }}>
+                  <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) addLangRow(e.target.value); e.target.value = ""; }}
+                    disabled={addableLangs.length === 0 || langRows.length >= MAX_MAIL_LANGS}
+                    style={{
+                      width: "100%", padding: "7px 9px", borderRadius: 9,
+                      border: "1px solid #e2e8f0", background: "#fff",
+                      fontSize: 12, color: addableLangs.length === 0 ? "#94a3b8" : "#334155",
+                    }}
+                  >
+                    <option value="">언어 추가</option>
+                    {addableLangs.map((l) => (
+                      <option key={l.code} value={l.code}>{l.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-          {/* 내용 */}
-          <FormRow label="내용" required>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="우편 내용을 입력하세요"
-              rows={4}
-              maxLength={500}
-              style={{ ...inputStyle, resize: "vertical", minHeight: 96 }}
-            />
-          </FormRow>
+              {/* 제목·내용 에디터 */}
+              <div style={{ display: "flex", flexDirection: "column", overflow: "auto", padding: "12px 14px", gap: 10 }}>
+                {langActiveRow ? (
+                  <>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 5 }}>제목</label>
+                      <input
+                        type="text"
+                        value={langActiveRow.title}
+                        onChange={(e) => setLangField(langActiveRow.id, "title", e.target.value)}
+                        placeholder="우편 제목을 입력하세요"
+                        maxLength={100}
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>내용</label>
+                        <span style={{ fontSize: 11, color: "#94a3b8", fontVariantNumeric: "tabular-nums" }}>
+                          {langActiveRow.content.length} / {MAX_MAIL_CONTENT}
+                        </span>
+                      </div>
+                      <textarea
+                        value={langActiveRow.content}
+                        onChange={(e) => setLangField(langActiveRow.id, "content", e.target.value.slice(0, MAX_MAIL_CONTENT))}
+                        placeholder="우편 내용을 입력하세요"
+                        style={{ ...inputStyle, resize: "none", flex: 1, lineHeight: 1.55 }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <p style={{ color: "#94a3b8", fontSize: 13 }}>언어를 선택하세요.</p>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* 발송인 */}
           <FormRow label="발송인">

@@ -14,6 +14,7 @@ import {
   COLLECTION_GLOBAL_MAILS,
   COLLECTION_PERSONAL_MAILS,
   COLLECTION_PERSONAL_MAIL_DISPATCHES,
+  type MailLocaleEntry,
   type MailRewardStored,
   type PersonalListEntry,
 } from "@/lib/firestore-mail-schema";
@@ -54,6 +55,8 @@ export type PostDoc = {
   /** mail-dispatches/{mailId}/recipients.json — 없으면 빈 문자열 */
   recipientListPath: string;
   mailStorage: MailStorageKind;
+  /** 다국어 제목/내용 (없으면 단일 언어) */
+  localeContents: MailLocaleEntry[];
 };
 
 const MAX_ROW_VALUE_KEY_LEN = 256;
@@ -151,6 +154,21 @@ function tsToIso(v: unknown): string {
   return new Date(0).toISOString();
 }
 
+function localeContentsFromDoc(raw: unknown): MailLocaleEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const o = item as Record<string, unknown>;
+    if (typeof o.language !== "string") return [];
+    return [{
+      language: o.language,
+      title: typeof o.title === "string" ? o.title : "",
+      content: typeof o.content === "string" ? o.content : "",
+      fallback: o.fallback === true,
+    }];
+  });
+}
+
 function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
   return {
     postId: id,
@@ -167,6 +185,7 @@ function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
     recipientCount: 0,
     recipientListPath: "",
     mailStorage: "global_mails",
+    localeContents: localeContentsFromDoc(d.localeContents),
   };
 }
 
@@ -187,6 +206,7 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
       recipientCount: typeof d.recipientCount === "number" ? d.recipientCount : 0,
       recipientListPath: d.recipientListPath,
       mailStorage: "personal_mail_dispatches",
+      localeContents: localeContentsFromDoc(d.localeContents),
     };
   }
   const recipientMap = normalizeRecipientMapFromDoc(d.recipientUids);
@@ -205,6 +225,7 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
     recipientCount: Object.keys(recipientMap).length,
     recipientListPath: "",
     mailStorage: "personal_mail_dispatches",
+    localeContents: localeContentsFromDoc(d.localeContents),
   };
 }
 
@@ -507,11 +528,27 @@ export async function POST(req: Request) {
       rewards?: RewardEntry[];
       targetAudience?: "all" | "specific";
       recipientUids?: PostRecipientUidMap | string[];
+      localeContents?: MailLocaleEntry[];
     };
 
     const { postType, title, content, sender, expiresAt } = body;
     if (!postType || !title || !content || !expiresAt) {
       return NextResponse.json({ ok: false, error: "필수 항목 누락" }, { status: 400 });
+    }
+
+    // localeContents 정규화: 유효한 항목만, fallback 정확히 1개
+    const rawLocale = Array.isArray(body.localeContents) ? body.localeContents : [];
+    const localeContents: MailLocaleEntry[] = rawLocale
+      .filter((e) => e && typeof e.language === "string" && e.language.trim())
+      .map((e) => ({
+        language: e.language.trim(),
+        title: String(e.title ?? "").trim(),
+        content: String(e.content ?? ""),
+        fallback: e.fallback === true,
+      }));
+    // fallback이 없으면 첫 번째를 fallback으로
+    if (localeContents.length > 0 && !localeContents.some((e) => e.fallback)) {
+      localeContents[0]!.fallback = true;
     }
 
     if (postType !== "Admin") {
@@ -534,7 +571,7 @@ export async function POST(req: Request) {
 
     if (targetAudience === "all") {
       const mailId = makeGlobalMailId();
-      await db.collection(COLLECTION_GLOBAL_MAILS).doc(mailId).set({
+      const globalDoc: Record<string, unknown> = {
         title,
         content,
         sender: senderStr,
@@ -542,7 +579,9 @@ export async function POST(req: Request) {
         createdAt: Timestamp.fromDate(now),
         expiresAt: Timestamp.fromDate(expiresDate),
         rewards: storedRewards,
-      });
+      };
+      if (localeContents.length > 0) globalDoc.localeContents = localeContents;
+      await db.collection(COLLECTION_GLOBAL_MAILS).doc(mailId).set(globalDoc);
       await bumpPostboxSignalServer(db);
       return NextResponse.json({ ok: true, postId: mailId });
     }
@@ -565,7 +604,7 @@ export async function POST(req: Request) {
 
     const recipientListPath = await uploadRecipientList(mailId, recipients);
 
-    await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set({
+    const dispatchDoc: Record<string, unknown> = {
       title,
       content,
       sender: senderStr,
@@ -575,7 +614,9 @@ export async function POST(req: Request) {
       rewards: storedRewards,
       recipientListPath,
       recipientCount: uids.length,
-    });
+    };
+    if (localeContents.length > 0) dispatchDoc.localeContents = localeContents;
+    await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set(dispatchDoc);
 
     // 유저별 personal_list에 500건씩 batch 추가
     const listEntry: PersonalListEntry = {
@@ -585,6 +626,7 @@ export async function POST(req: Request) {
       rewards: storedRewards,
       expiresAt: Timestamp.fromDate(expiresDate),
       sender: senderStr,
+      ...(localeContents.length > 0 ? { localeContents } : {}),
     };
     await writePersonalListBatch(db, uids, listEntry);
 

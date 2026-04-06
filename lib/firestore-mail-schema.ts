@@ -18,6 +18,13 @@ export const COLLECTION_PERSONAL_MAILS = "personal_mails";
 /** 개인 우편 발송 메타(제목·보상·recipientListPath 등). 수신자 본문은 Storage */
 export const COLLECTION_PERSONAL_MAIL_DISPATCHES = "personal_mail_dispatches";
 
+export type MailLocaleEntry = {
+  language: string;
+  title: string;
+  content: string;
+  fallback: boolean;
+};
+
 export type MailRewardStored = {
   table: string;
   row: string;
@@ -45,6 +52,8 @@ export type PersonalListEntry = {
   expiresAt: Timestamp;
   /** 유저에게 보이는 발송인 */
   sender: string;
+  /** 다국어 제목/내용 목록 (없으면 단일 언어) */
+  localeContents?: MailLocaleEntry[];
   claimedAt?: Timestamp;
   dismissedAt?: Timestamp;
 };
