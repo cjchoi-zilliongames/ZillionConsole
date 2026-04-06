@@ -8,7 +8,10 @@
 
 export const SPEC_FOLDER_ROUTES_STORAGE_PATH = "__spec/folder-routes.json";
 
-/** 루트 1단계가 `__` 로 시작하면 시스템용(매니페스트 등)으로 취급해 폴더 목록에서 제외 */
+/** 차트 스펙 루트가 아닌 Storage 최상위 세그먼트 (인벤토리·차트 관리·folder-routes 게시 대상에서 제외) */
+const NON_CHART_SPEC_ROOT_SEGMENTS = new Set(["mail-dispatches"]);
+
+/** 루트 1단계가 `__` 로 시작하면 시스템용(매니페스트 등). 그 외 우편 수신자 전용 트리 등은 스펙 폴더로 취급하지 않음 */
 export function isReservedSpecRootPrefix(folderPrefix: string): boolean {
   const first =
     folderPrefix
@@ -16,7 +19,8 @@ export function isReservedSpecRootPrefix(folderPrefix: string): boolean {
       .replace(/^\/+/, "")
       .replace(/\/$/, "")
       .split("/")[0] ?? "";
-  return first.startsWith("__");
+  if (first.startsWith("__")) return true;
+  return NON_CHART_SPEC_ROOT_SEGMENTS.has(first);
 }
 
 export type FolderRoutesManifest = {
