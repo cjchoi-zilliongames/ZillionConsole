@@ -1224,7 +1224,6 @@ export function PostRegisterModal({ defaultPostType, onClose, onCreated }: Props
         justifyContent: "center",
         padding: "24px 16px",
       }}
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <AdminGlobalLoadingOverlay
         message={postboxChartsLoading ? ADMIN_DATA_LOADING_MESSAGE : null}

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import type { PostDoc, PostType } from "@/app/api/admin/postbox/posts/route";
+import { noticeLocaleTabLabel } from "@/lib/notice-lang-display";
 import type { ReceiptsResponse, ReceiptRow } from "@/app/api/admin/postbox/receipts/route";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
@@ -929,6 +930,20 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
     appliedSearch: "",
   });
 
+  const [previewTabIdx, setPreviewTabIdx] = useState(0);
+
+  // post가 바뀌면 탭 인덱스 리셋
+  useEffect(() => { setPreviewTabIdx(0); }, [post.postId]);
+
+  const previewTabs = useMemo(() => {
+    const list = post.localeContents ?? [];
+    const fb = list.filter((c) => c.fallback);
+    const rest = list.filter((c) => !c.fallback).sort((a, b) => a.language.localeCompare(b.language));
+    return [...fb, ...rest];
+  }, [post.localeContents]);
+
+  const previewCurrent = previewTabs[previewTabIdx] ?? previewTabs[0] ?? null;
+
   const overlayRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -1043,7 +1058,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
 
         {/* ── Header ── */}
         <div style={{ padding: "18px 24px 0", borderBottom: "1px solid #e5e7eb", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: "#6b7280", letterSpacing: "0.04em" }}>
@@ -1062,10 +1077,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                   </>
                 )}
               </div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#111827", letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "calc(min(1320px, 94vw) - 140px)" }}>
-                {post.title}
-              </div>
-              <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 3, fontFamily: "monospace" }}>
+              <div style={{ fontSize: 11, color: "#9ca3af", fontFamily: "monospace" }}>
                 {post.postId}
               </div>
             </div>
@@ -1082,6 +1094,77 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
             >
               ×
             </button>
+          </div>
+
+          {/* ── 우편 내용 미리보기 ── */}
+          <div style={{ borderTop: "1px solid #f1f5f9", marginBottom: 2 }}>
+            {previewTabs.length > 0 ? (
+              <>
+                <div
+                  role="tablist"
+                  aria-label="언어"
+                  style={{ display: "flex", flexWrap: "wrap", borderBottom: "1px solid #e5e7eb" }}
+                >
+                  {previewTabs.map((c, i) => {
+                    const active = i === previewTabIdx;
+                    return (
+                      <button
+                        key={`${c.language}-${i}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setPreviewTabIdx(i)}
+                        style={{
+                          padding: "10px 14px",
+                          border: "none",
+                          borderBottom: active ? "2px solid #0f172a" : "2px solid transparent",
+                          marginBottom: -1,
+                          background: "transparent",
+                          color: active ? "#0f172a" : "#64748b",
+                          fontWeight: active ? 700 : 500,
+                          fontSize: 13,
+                          cursor: "pointer",
+                          letterSpacing: "-0.01em",
+                        }}
+                      >
+                        {noticeLocaleTabLabel(c.language)}
+                      </button>
+                    );
+                  })}
+                </div>
+                {previewCurrent && (
+                  <div style={{ padding: "10px 0 12px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", columnGap: 16, padding: "5px 0", alignItems: "start" }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>제목</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.01em" }}>
+                        {previewCurrent.title || "—"}
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", columnGap: 16, padding: "5px 0", alignItems: "start" }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>내용</span>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 }}>
+                        {previewCurrent.content || "—"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ padding: "10px 0 12px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", columnGap: 16, padding: "5px 0", alignItems: "start" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>제목</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.01em" }}>
+                    {post.title || "—"}
+                  </span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0, 1fr)", columnGap: 16, padding: "5px 0", alignItems: "start" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>내용</span>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 }}>
+                    {post.content || "—"}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── 탭 + 검색 ── */}
