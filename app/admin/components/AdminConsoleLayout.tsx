@@ -57,6 +57,13 @@ export function AdminConsoleLayout({
 
   const mainMargin = sidebarCollapsed ? ADMIN_SIDEBAR_COLLAPSED_PX : ADMIN_SIDEBAR_EXPANDED_PX;
 
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const showHistoryInTopBar = activeNav === "spec";
+
+  useEffect(() => {
+    if (activeNav !== "spec") setHistoryOpen(false);
+  }, [activeNav]);
+
   return (
     <div
       style={{
@@ -72,6 +79,8 @@ export function AdminConsoleLayout({
         useClientStorage={useClientStorage}
         displayEmail={displayEmail}
         onLogout={() => void onLogout()}
+        historyOpen={showHistoryInTopBar ? historyOpen : undefined}
+        onToggleHistory={showHistoryInTopBar ? (() => setHistoryOpen((v) => !v)) : undefined}
       />
       <AdminSidebar
         projectDisplayName={projectDisplayName}
@@ -80,7 +89,7 @@ export function AdminConsoleLayout({
         onToggleCollapsed={toggleSidebar}
       />
 
-      <AdminConsoleChromeProvider sidebarWidthPx={mainMargin}>
+      <AdminConsoleChromeProvider sidebarWidthPx={mainMargin} historyOpen={historyOpen} setHistoryOpen={setHistoryOpen}>
         <div
           style={{
             marginLeft: mainMargin,

@@ -7,6 +7,8 @@ type AdminTopBarProps = {
   useClientStorage: boolean;
   displayEmail: string | null;
   onLogout: () => void;
+  historyOpen?: boolean;
+  onToggleHistory?: () => void;
 };
 
 /** 기존 TopNavbar와 동일한 상단 탭. 네비는 사이드바 — 여기서는 프로젝트명만 표시 */
@@ -15,6 +17,8 @@ export function AdminTopBar({
   useClientStorage,
   displayEmail,
   onLogout,
+  historyOpen,
+  onToggleHistory,
 }: AdminTopBarProps) {
   return (
     <nav
@@ -58,6 +62,34 @@ export function AdminTopBar({
       </span>
 
       <div style={{ flex: 1 }} />
+
+      {onToggleHistory && (
+        <button
+          type="button"
+          onClick={onToggleHistory}
+          title="히스토리"
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 6,
+            border: historyOpen ? "1px solid rgba(37,99,235,0.5)" : "1px solid rgba(255,255,255,0.15)",
+            background: historyOpen ? "rgba(37,99,235,0.25)" : "rgba(255,255,255,0.06)",
+            color: historyOpen ? "#93c5fd" : "rgba(255,255,255,0.6)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            marginRight: 12,
+            transition: "background 0.15s, border-color 0.15s",
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+        </button>
+      )}
 
       {displayEmail !== null && (
         <span

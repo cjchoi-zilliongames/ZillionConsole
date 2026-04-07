@@ -13,8 +13,12 @@ import { useFolderOperations } from "./hooks/useFolderOperations";
 import { useChartChangeSignal } from "./hooks/useChartChangeSignal";
 
 import { useAdminConsoleChrome } from "../components/AdminConsoleChromeContext";
-import { AdminGlobalLoadingOverlay } from "../components/AdminGlobalLoadingOverlay";
 import { useAdminSession } from "../hooks/useAdminSession";
+import {
+  ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX,
+  ADMIN_LIST_TOOLBAR_SEARCH_WIDTH_PX,
+  adminListPanelToolbarZeroWidthRhythmSpacerStyle,
+} from "@/lib/admin-list-table-layout";
 import { FolderSidebar } from "./components/FolderSidebar";
 import { SpecFilesTable } from "./components/SpecFilesTable";
 import { UploadModal } from "./components/UploadModal";
@@ -29,20 +33,10 @@ import { CSVPreviewModal } from "./components/CSVPreviewModal";
 import { ChatBot } from "./components/ChatBot";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { BulkActionToast, type BulkToastTone } from "./components/BulkActionToast";
+import { AdminGlobalLoadingOverlay } from "../components/AdminGlobalLoadingOverlay";
 
-const card: React.CSSProperties = {
-  background: "#ffffff",
-  border: "1px solid #e5e7eb",
-  borderRadius: 18,
-  padding: 18,
-  boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
-};
-
-const labelMuted: React.CSSProperties = {
-  fontSize: 12,
-  color: "#6b7280",
-  marginBottom: 6,
-};
+/** 우편·공지 목록과 동일 (`AdminGlobalLoadingOverlay` 캡션) */
+const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 function ConsoleDockedBar({ style, children }: { style?: CSSProperties; children: ReactNode }) {
   const { sidebarWidthPx } = useAdminConsoleChrome();
@@ -63,6 +57,7 @@ function ConsoleDockedBar({ style, children }: { style?: CSSProperties; children
 
 export function SpecToolsClient() {
   const { bootstrapped, useClientStorage, setNavLocked } = useAdminSession();
+  const { historyOpen, setHistoryOpen } = useAdminConsoleChrome();
 
   // ── Core hooks ──────────────────────────────────────────────────────────────
   const folderState = useFolderState();
@@ -136,7 +131,6 @@ export function SpecToolsClient() {
   const [folderCreatedAtMap, setFolderCreatedAtMap] = useState<Record<string, Date>>({});
   const [editingMemoKey, setEditingMemoKey] = useState<string | null>(null);
   const [editingMemoValue, setEditingMemoValue] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [emptyFolderAfterMove, setEmptyFolderAfterMove] = useState<string | null>(null);
   const [deleteEmptyFolderTarget, setDeleteEmptyFolderTarget] = useState<string | null>(null);
   const [memoSaving, setMemoSaving] = useState(false);
@@ -427,39 +421,95 @@ export function SpecToolsClient() {
 
   return (
     <>
-      <AdminGlobalLoadingOverlay message={!inventory && !invError ? "데이터 불러오는 중…" : null} />
+      <AdminGlobalLoadingOverlay
+        message={loadingInv && !folderOps.mergeBusy ? ADMIN_DATA_LOADING_MESSAGE : null}
+      />
       <style>{`@keyframes _spin{to{transform:rotate(360deg)}}`}</style>
 
-      <div style={{ padding: `${Math.round(20 * 0.95)}px 0 0`, marginBottom: 4 }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>차트 관리</h1>
-        <p style={{ margin: "6px 0 0", fontSize: 13, color: "#94a3b8" }}>스펙 데이터 / 버전 관리 시스템</p>
-      </div>
+      <div style={{ padding: "19px 0 40px", width: "100%" }}>
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>차트 관리</h1>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>스펙 데이터 / 버전 관리 시스템</p>
+        </div>
 
-      <div style={{ marginTop: Math.round(28 * 0.95), padding: "0 0 40px", display: "grid", gap: 20 }}>
-          <section style={{ ...card, padding: 0, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "calc(100vh - 280px)", maxHeight: "calc(100vh - 280px)" }}>
-            <div style={{ padding: "14px 18px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>Storage 브라우저</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {invError && <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600 }}>{invError}</span>}
-                <button
-                  type="button"
-                  onClick={() => void refreshInventory()}
-                  disabled={loadingInv}
-                  style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", fontWeight: 600, fontSize: 12, color: "#374151", cursor: loadingInv ? "wait" : "pointer" }}
-                >
-                  {loadingInv ? "불러오는 중…" : "새로고침"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen((v) => !v)}
-                  style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: historyOpen ? "#f0f4ff" : "#fff", fontWeight: 600, fontSize: 12, color: historyOpen ? "#2563eb" : "#374151", cursor: "pointer", transition: "background 0.15s" }}
-                >
-                  히스토리
-                </button>
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid #e5e7eb",
+            borderRadius: 14,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            height: "calc(100vh - 240px)",
+            maxHeight: "calc(100vh - 240px)",
+          }}
+        >
+            {/* Toolbar — 우편·공지와 동일 패딩·줄 높이·우측 액션 정렬 */}
+            <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #e5e7eb", padding: "0 16px 0 20px", gap: 8, flexShrink: 0, minHeight: ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX }}>
+              <div aria-hidden style={adminListPanelToolbarZeroWidthRhythmSpacerStyle} />
+              <span style={{ fontWeight: 500, fontSize: 14, color: "#64748b", whiteSpace: "nowrap", flexShrink: 0 }}>
+                Storage 브라우저
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 14, color: "#0f172a", whiteSpace: "nowrap", flexShrink: 0 }}>
+                {selectedFolder ? (folderNames[selectedFolder] ?? "(이름 없음)") : "—"}
+              </span>
+              {invError && <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600, marginLeft: 8, flexShrink: 0 }}>{invError}</span>}
+              <div style={{ flex: 1 }} />
+              {selectedFolder && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setUploadOpen(true)}
+                    style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    업로드
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulkBusy || selectedPaths.size === 0 || destFoldersForMove.length === 0}
+                    onClick={() => openMoveCsvModal()}
+                    style={{ padding: "6px 14px", borderRadius: 7, border: "1px solid #e2e8f0", background: selectedPaths.size === 0 || destFoldersForMove.length === 0 ? "#f8fafc" : "#fff", color: selectedPaths.size === 0 || destFoldersForMove.length === 0 ? "#94a3b8" : "#2563eb", fontWeight: 600, fontSize: 13, cursor: bulkBusy || selectedPaths.size === 0 || destFoldersForMove.length === 0 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+                  >
+                    이동
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulkBusy || selectedPaths.size === 0}
+                    onClick={() => openDeleteCsvModal()}
+                    style={{ padding: "6px 14px", borderRadius: 7, border: "1px solid #e2e8f0", background: selectedPaths.size === 0 ? "#f8fafc" : "#fff", color: selectedPaths.size === 0 ? "#94a3b8" : "#ef4444", fontWeight: 600, fontSize: 13, cursor: bulkBusy || selectedPaths.size === 0 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+                  >
+                    삭제
+                  </button>
+                </>
+              )}
+              <div style={{ position: "relative" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
+                  <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                  <path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="차트명 검색…"
+                  aria-label="차트명 검색"
+                  style={{ paddingLeft: 29, paddingRight: 10, paddingTop: 6, paddingBottom: 6, borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: 13, color: "#1e293b", width: ADMIN_LIST_TOOLBAR_SEARCH_WIDTH_PX, outline: "none", boxSizing: "border-box" }}
+                />
               </div>
+              <button
+                type="button"
+                onClick={() => void refreshInventory()}
+                disabled={loadingInv}
+                title="새로고침"
+                style={{ width: 32, height: 32, borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: loadingInv ? "#cbd5e1" : "#64748b", cursor: loadingInv ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M20 9A8 8 0 0 0 6.93 5.41M4 15a8 8 0 0 0 13.07 3.59" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
             </div>
             <div style={{ display: "flex", flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-
               <FolderSidebar
                 folders={folders}
                 sortedVersionFolders={sortedVersionFolders}
@@ -492,72 +542,10 @@ export function SpecToolsClient() {
 
               {/* ── Main content ── */}
               <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: "#fff" }}>
-                {/* Toolbar */}
-                <div style={{ padding: "10px 18px", borderBottom: "1px solid #f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                  <div>
-                    <div style={labelMuted}>현재 앱 버전</div>
-                    <div style={{ fontSize: 15, fontWeight: 700 }}>
-                      {selectedFolder ? (folderNames[selectedFolder] ?? "(이름 없음)") : "—"}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {selectedFolder && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={bulkBusy || selectedPaths.size === 0 || destFoldersForMove.length === 0}
-                          onClick={() => openMoveCsvModal()}
-                          style={{ padding: "7px 13px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "1px solid #93c5fd", background: "#eff6ff", color: "#1d4ed8", cursor: bulkBusy || selectedPaths.size === 0 || destFoldersForMove.length === 0 ? "not-allowed" : "pointer", opacity: selectedPaths.size === 0 ? 0.4 : 1 }}
-                        >
-                          이동
-                        </button>
-                        <button
-                          type="button"
-                          disabled={bulkBusy || selectedPaths.size === 0}
-                          onClick={() => openDeleteCsvModal()}
-                          style={{ padding: "7px 13px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", cursor: bulkBusy || selectedPaths.size === 0 ? "not-allowed" : "pointer", opacity: selectedPaths.size === 0 ? 0.4 : 1 }}
-                        >
-                          삭제
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setUploadOpen(true)}
-                          style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
-                        >
-                          업로드
-                        </button>
-                      </>
-                    )}
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: 10, border: "1px solid #e2e8f0", background: "#f8fafc", minWidth: 120, maxWidth: 280 }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                        <circle cx="11" cy="11" r="7" /><path d="m21 21-4.2-4.2" />
-                      </svg>
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="차트명 검색…"
-                        aria-label="차트명 검색"
-                        style={{ flex: 1, border: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: "#0f172a", outline: "none", minWidth: 0 }}
-                      />
-                      <button type="button" onClick={() => setSearchQuery("")} aria-label="검색 초기화"
-                        style={{ border: "none", background: "transparent", cursor: searchQuery ? "pointer" : "default", padding: 0, lineHeight: 1, color: "#94a3b8", fontSize: 14, flexShrink: 0, visibility: searchQuery ? "visible" : "hidden" }}>
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* File list — flex 자식에 minHeight:0 + 내부 overflow:auto 로 차트 많을 때 스크롤 */}
+                {/* File list */}
                 <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", padding: "0 18px 16px", display: "flex", flexDirection: "column" }}>
                   {!selectedFolder ? (
-                    <p style={{ flex: 1, minHeight: 240, margin: 0, padding: 24, color: "#6b7280", display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
-                      왼쪽에서 폴더를 선택하세요.
-                    </p>
-                  ) : loadingInv ? (
-                    <p style={{ flex: 1, minHeight: 240, margin: 0, padding: 24, color: "#6b7280", display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>
-                      불러오는 중…
-                    </p>
+                    <div style={{ flex: 1, minHeight: 0 }} aria-hidden />
                   ) : (
                     <div
                       style={{
@@ -592,8 +580,8 @@ export function SpecToolsClient() {
               </div>
 
             </div>
-          </section>
         </div>
+      </div>
       <HistoryPanel isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
       <BulkActionToast message={bulkToast?.text ?? null} tone={bulkToast?.tone ?? "default"} onClear={clearBulkToast} />
 
@@ -754,26 +742,6 @@ export function SpecToolsClient() {
           <div style={{ height: 4, borderRadius: 999, background: "#e0e7ff", overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${mergeProgress}%`, background: "linear-gradient(90deg, #1d4ed8 0%, #3b82f6 100%)", borderRadius: 999, transition: "width 0.12s linear" }} />
           </div>
-        </ConsoleDockedBar>
-      )}
-
-      {loadingInv && inventory && !folderOps.mergeBusy && (
-        <ConsoleDockedBar
-          style={{
-            background: "#fff",
-            border: "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: "10px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-            fontSize: 13,
-            color: "#6b7280",
-          }}
-        >
-          <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid #e5e7eb", borderTopColor: "#2563eb", animation: "_spin 0.7s linear infinite", flexShrink: 0 }} />
-          새로고침 중…
         </ConsoleDockedBar>
       )}
 
