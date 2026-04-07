@@ -1716,7 +1716,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                           onClick={() => setLangActiveId(r.id)}
                           style={{
                             flex: 1, textAlign: "left", padding: "7px 9px", borderRadius: 9,
-                            border: active ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                            border: active ? "2px solid #2563eb" : "2px solid #e2e8f0",
                             background: active ? "#eff6ff" : "#fff",
                             cursor: "pointer", fontSize: 12, fontWeight: active ? 700 : 500,
                             color: active ? "#1d4ed8" : "#334155",
