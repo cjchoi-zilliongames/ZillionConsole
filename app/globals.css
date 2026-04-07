@@ -102,6 +102,16 @@ input.admin-list-table-checkbox[type="checkbox"] {
     0 1px 2px rgba(15, 23, 42, 0.06),
     0 0 0 1px rgba(15, 23, 42, 0.04);
 }
+.post-register-datepicker-input:disabled {
+  background-color: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+  cursor: default;
+}
+.post-register-datepicker-wrap:hover .post-register-datepicker-input:disabled {
+  border-color: #e2e8f0;
+  box-shadow: none;
+}
 .post-register-datepicker-input:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);

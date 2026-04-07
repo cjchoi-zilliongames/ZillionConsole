@@ -1515,7 +1515,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
             >
               <div style={{ minWidth: 0 }}>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                  발송일<span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
+                  발송일
                 </label>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <ToggleBtn active={dispatchType === "immediate"} onClick={() => setDispatchType("immediate")}>
@@ -1632,7 +1632,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               </div>
               <div style={{ minWidth: 0 }}>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                  만료기간<span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
+                  만료 기간
                 </label>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {(["1", "7", "14", "30"] as ExpiryPreset[]).map((val) => (
@@ -1682,16 +1682,13 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
           {/* 제목 / 내용 (다국어) */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-              제목 / 내용<span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
-            </label>
             <div style={{
               border: "1px solid #e2e8f0",
               borderRadius: 10,
               overflow: "hidden",
               display: "grid",
               gridTemplateColumns: "168px 1fr",
-              height: 340,
+              height: 370,
             }}>
               {/* 언어 사이드바 */}
               <div style={{
@@ -2200,7 +2197,7 @@ function FormRow({ label, required, children }: { label: string; required?: bool
   return (
     <div style={{ marginBottom: 16 }}>
       <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-        {label}{required && <span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>}
+        {label}
       </label>
       {children}
     </div>

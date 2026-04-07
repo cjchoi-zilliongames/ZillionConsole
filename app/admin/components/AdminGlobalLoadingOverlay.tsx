@@ -4,6 +4,20 @@ import { useEffect, useState } from "react";
 
 const FADE_MS = 267;
 
+const CSS = `
+@keyframes _adminOvSpin {
+  to { transform: rotate(360deg); }
+}
+@keyframes _adminOvDash {
+  0%   { stroke-dasharray: 1 150;  stroke-dashoffset: 0; }
+  50%  { stroke-dasharray: 90 150; stroke-dashoffset: -35; }
+  100% { stroke-dasharray: 90 150; stroke-dashoffset: -124; }
+}
+._adminOvArc {
+  animation: _adminOvDash 1.5s ease-in-out infinite;
+}
+`;
+
 /** Semi-transparent black dimmer; shell stays visible underneath. Fades in/out via layer opacity. */
 export function AdminGlobalLoadingOverlay({ message }: { message: string | null }) {
   const [layerOpen, setLayerOpen] = useState(() => message != null);
@@ -20,9 +34,7 @@ export function AdminGlobalLoadingOverlay({ message }: { message: string | null 
           if (!cancelled) setVisible(true);
         });
       });
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     }
     setVisible(false);
   }, [message]);
@@ -37,7 +49,7 @@ export function AdminGlobalLoadingOverlay({ message }: { message: string | null 
 
   return (
     <>
-      <style>{`@keyframes _adminGlobalSpin{to{transform:rotate(360deg)}}`}</style>
+      <style>{CSS}</style>
       <div
         onTransitionEnd={onOverlayTransitionEnd}
         style={{
@@ -55,23 +67,21 @@ export function AdminGlobalLoadingOverlay({ message }: { message: string | null 
           pointerEvents: visible ? "auto" : "none",
         }}
       >
-        <div
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
-            border: "3px solid rgba(255, 255, 255, 0.35)",
-            borderTopColor: "#fff",
-            animation: "_adminGlobalSpin 0.7s linear infinite",
-            boxShadow: "0 2px 16px rgba(0, 0, 0, 0.35)",
-          }}
-        />
+        <svg
+          width="36"
+          height="36"
+          viewBox="0 0 44 44"
+          style={{ animation: "_adminOvSpin 1.5s linear infinite", display: "block" }}
+        >
+          <circle cx="22" cy="22" r="18" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="3" />
+          <circle cx="22" cy="22" r="18" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" className="_adminOvArc" />
+        </svg>
         <span
           style={{
             fontSize: 14,
             fontWeight: 600,
             color: "#f1f5f9",
-            textShadow: "0 1px 2px rgba(0, 0, 0, 0.5)",
+            textShadow: "0 1px 2px rgba(0,0,0,0.5)",
           }}
         >
           {caption}
