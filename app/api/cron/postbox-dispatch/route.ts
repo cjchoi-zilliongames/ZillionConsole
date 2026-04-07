@@ -138,6 +138,7 @@ async function dispatchJobs(
             lastRunAt: Timestamp.fromDate(sendTime),
             nextRunAt: Timestamp.fromDate(nextRun),
             runCount: FieldValue.increment(1),
+            lastDispatchedMailId: mailId,
           });
         }
       } else {
@@ -148,16 +149,25 @@ async function dispatchJobs(
 
         if (uids.length > 0) {
           if (job.scheduleType === "scheduled") {
-            // scheduled: isActive true + personal_list 배치 쓰기
-            await jobRef.update({
+            // 예약 1회 지정: 즉시 발송과 동일하게 pm_* 문서 + personal_list.mailId = pm_* (게임·수령 API 일치)
+            const mailId = makePersonalMailId();
+            const newRecipientListPath = await uploadRecipientList(mailId, recipients);
+            const dispatchDoc: Record<string, unknown> = {
+              title,
+              content,
+              sender,
               isActive: true,
+              createdAt: Timestamp.fromDate(sendTime),
               expiresAt: Timestamp.fromDate(expiresAt),
-              scheduleStatus: "done",
-              lastRunAt: Timestamp.fromDate(sendTime),
-              runCount: FieldValue.increment(1),
-            });
+              rewards,
+              recipientListPath: newRecipientListPath,
+              recipientCount: uids.length,
+            };
+            if (localeContents.length > 0) dispatchDoc.localeContents = localeContents;
+            await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set(dispatchDoc);
+
             const listEntry: PersonalListEntry = {
-              mailId: jobDoc.id,
+              mailId,
               title,
               content,
               rewards,
@@ -166,6 +176,15 @@ async function dispatchJobs(
               ...(localeContents.length > 0 ? { localeContents } : {}),
             };
             await writePersonalListBatch(db, uids, listEntry);
+
+            await jobRef.update({
+              isActive: false,
+              expiresAt: Timestamp.fromDate(expiresAt),
+              scheduleStatus: "done",
+              lastRunAt: Timestamp.fromDate(sendTime),
+              runCount: FieldValue.increment(1),
+              lastDispatchedMailId: mailId,
+            });
           } else {
             // repeat — 새 pm_* 생성
             const mailId = makePersonalMailId();
@@ -201,6 +220,7 @@ async function dispatchJobs(
               lastRunAt: Timestamp.fromDate(sendTime),
               nextRunAt: Timestamp.fromDate(nextRun),
               runCount: FieldValue.increment(1),
+              lastDispatchedMailId: mailId,
             });
           }
         }

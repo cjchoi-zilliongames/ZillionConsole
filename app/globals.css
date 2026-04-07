@@ -24,3 +24,40 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 관리자 공지·우편 목록: 크기 고정 + 헤더 텍스트와 같은 줄상자에서 `vertical-align: middle` */
+/* 차트 관리(스펙 CSV) 목록 — 선택 열 체크박스만 확대 (버전 드롭다운과 무관) */
+input.spec-files-table-checkbox[type="checkbox"] {
+  width: 19px !important;
+  height: 19px !important;
+  min-width: 19px !important;
+  min-height: 19px !important;
+  max-width: 19px !important;
+  max-height: 19px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  display: inline-block !important;
+  vertical-align: middle !important;
+  accent-color: #0f172a;
+  font-size: 19px !important;
+  line-height: 1 !important;
+  cursor: pointer;
+}
+
+input.admin-list-table-checkbox[type="checkbox"] {
+  width: 17px !important;
+  height: 17px !important;
+  min-width: 17px !important;
+  min-height: 17px !important;
+  max-width: 17px !important;
+  max-height: 17px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  display: inline-block !important;
+  vertical-align: middle !important;
+  accent-color: #0f172a;
+  font-size: 17px !important;
+  line-height: 1 !important;
+}

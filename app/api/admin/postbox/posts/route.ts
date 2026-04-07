@@ -328,8 +328,10 @@ async function refillGlobalQueue(
     return;
   }
   for (const doc of snap.docs) {
-    st.gQ.push(doc.id);
-    gMap.set(doc.id, doc.data());
+    if (!doc.id.startsWith("gsj_")) {
+      st.gQ.push(doc.id);
+      gMap.set(doc.id, doc.data());
+    }
   }
   const last = snap.docs[snap.docs.length - 1]!;
   st.gTail = { id: last.id, ms: docCreatedMs(last.data()) };
@@ -354,8 +356,10 @@ async function refillPersonalQueue(
     return;
   }
   for (const doc of snap.docs) {
-    st.pQ.push(doc.id);
-    pMap.set(doc.id, doc.data());
+    if (!doc.id.startsWith("psj_")) {
+      st.pQ.push(doc.id);
+      pMap.set(doc.id, doc.data());
+    }
   }
   const last = snap.docs[snap.docs.length - 1]!;
   st.pTail = { id: last.id, ms: docCreatedMs(last.data()) };

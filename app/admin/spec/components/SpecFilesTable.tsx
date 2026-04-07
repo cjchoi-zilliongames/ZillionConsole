@@ -8,6 +8,9 @@ type FileGroup = { displayName: string; versions: InventoryFile[] };
 
 const COL_MIN = { select: 40, name: 100, version: 88 };
 
+/** 차트 목록 선택 열 — 크기는 `globals.css` `.spec-files-table-checkbox` */
+const SPEC_FILES_TABLE_CHECKBOX_CLASSNAME = "spec-files-table-checkbox";
+
 /** 목록·드롭다운 공통 표기: `ver.` 접두 + 번호 */
 function chartVersionText(n: number) {
   return `ver.${n}`;
@@ -256,7 +259,14 @@ export function SpecFilesTable({
               onMouseEnter={() => setHoveredCol(0)}
               onMouseLeave={() => setHoveredCol(null)}
             >
-              <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} title="전체 선택" aria-label="전체 선택" />
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleSelectAllVisible}
+                title="전체 선택"
+                aria-label="전체 선택"
+                className={SPEC_FILES_TABLE_CHECKBOX_CLASSNAME}
+              />
               {resizeHandle("선택 열과 이름 열 사이 너비 조절", 0)}
             </th>
             <th
@@ -352,6 +362,7 @@ export function SpecFilesTable({
                     checked={g.versions.length > 0 && g.versions.every((v) => selectedPaths.has(v.fullPath))}
                     onChange={() => toggleGroup(g.versions)}
                     aria-label={`선택 ${g.displayName}`}
+                    className={SPEC_FILES_TABLE_CHECKBOX_CLASSNAME}
                   />
                 </td>
                 <td

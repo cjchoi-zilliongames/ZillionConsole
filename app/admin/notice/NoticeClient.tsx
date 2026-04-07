@@ -10,10 +10,20 @@ import { NoticeCreateModal } from "./components/NoticeCreateModal";
 import { useNoticeChangeSignal } from "./hooks/useNoticeChangeSignal";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import {
+  ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX,
+  ADMIN_LIST_TOOLBAR_SEARCH_WIDTH_PX,
   ADMIN_NOTICE_LIST_COL_DEFAULTS,
   ADMIN_NOTICE_LIST_COL_MINS,
   ADMIN_NOTICE_LIST_COL_STORAGE_KEY,
+  ADMIN_LIST_SELECT_COL_SYNC_STORAGE_KEY,
   adminListColBox,
+  adminListPanelFooterBarStyle,
+  adminListPanelPageSizeSelectStyle,
+  adminListPanelToolbarZeroWidthRhythmSpacerStyle,
+  ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME,
+  ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX,
+  adminListTableCheckboxInputStyle,
+  adminListTableTheadRowStyle,
   noticeListTableLayout as noticeTbl,
 } from "@/lib/admin-list-table-layout";
 import { AdminTableResizeHandle } from "@/lib/admin-table-resize-handle";
@@ -133,6 +143,7 @@ export function NoticeClient() {
     storageKey: ADMIN_NOTICE_LIST_COL_STORAGE_KEY,
     defaults: ADMIN_NOTICE_LIST_COL_DEFAULTS,
     mins: ADMIN_NOTICE_LIST_COL_MINS,
+    syncSelectColumnStorageKey: ADMIN_LIST_SELECT_COL_SYNC_STORAGE_KEY,
   });
 
   const fetchNotices = useCallback(async (opts?: { soft?: boolean }) => {
@@ -261,111 +272,9 @@ export function NoticeClient() {
         message={loading && !fetchError ? "데이터 불러오는 중…" : null}
       />
       <div style={{ padding: "19px 0 40px", width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 20 }}>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>공지</h1>
-            <p style={{ margin: "6px 0 0", fontSize: 13, color: "#94a3b8" }}>운영 공지 관리</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setEditNoticeTarget(null);
-              setShowCreateModal(true);
-            }}
-            style={{
-              padding: "8px 18px",
-              borderRadius: 8,
-              border: "none",
-              background: "#0f172a",
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
-            + 공지 등록
-          </button>
-          <button
-            type="button"
-            onClick={() => { void handleDelete(); }}
-            disabled={selected.size === 0}
-            style={{
-              padding: "8px 18px",
-              borderRadius: 8,
-              border: "1px solid #e2e8f0",
-              background: selected.size === 0 ? "#f8fafc" : "#fff",
-              color: selected.size === 0 ? "#94a3b8" : "#ef4444",
-              fontWeight: 600,
-              fontSize: 13,
-              cursor: selected.size === 0 ? "not-allowed" : "pointer",
-            }}
-          >
-            삭제{selected.size > 0 ? ` (${selected.size})` : ""}
-          </button>
-          <div style={{ position: "relative" }}>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              style={{
-                position: "absolute",
-                left: 10,
-                top: "50%",
-                transform: "translateY(-50%)",
-                color: "#94a3b8",
-                pointerEvents: "none",
-              }}
-            >
-              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-              <path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <input
-              type="text"
-              placeholder="이름, 작성자, UUID, 본문 검색"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              style={{
-                paddingLeft: 32,
-                paddingRight: 12,
-                paddingTop: 8,
-                paddingBottom: 8,
-                borderRadius: 8,
-                border: "1px solid #e2e8f0",
-                background: "#f8fafc",
-                fontSize: 13,
-                color: "#1e293b",
-                width: 220,
-                outline: "none",
-              }}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => { void fetchNotices(); }}
-            disabled={loading}
-            title="새로고침"
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 8,
-              border: "1px solid #e2e8f0",
-              background: "#f8fafc",
-              color: loading ? "#cbd5e1" : "#64748b",
-              cursor: loading ? "wait" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-              <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M20 9A8 8 0 0 0 6.93 5.41M4 15a8 8 0 0 0 13.07 3.59" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>공지</h1>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>운영 공지 관리</p>
         </div>
 
         <div
@@ -376,18 +285,54 @@ export function NoticeClient() {
             overflow: "hidden",
             display: "flex",
             flexDirection: "column",
-            height: "calc(100vh - 280px)",
-            maxHeight: "calc(100vh - 280px)",
+            height: "calc(100vh - 240px)",
+            maxHeight: "calc(100vh - 240px)",
           }}
         >
-          <div
-            style={{
-              flexShrink: 0,
-              padding: "14px 20px 12px",
-              borderBottom: "1px solid #e2e8f0",
-            }}
-          >
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>공지</div>
+          {/* Toolbar */}
+          <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #e5e7eb", padding: "0 16px 0 20px", gap: 8, flexShrink: 0, minHeight: ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX }}>
+            <div aria-hidden style={adminListPanelToolbarZeroWidthRhythmSpacerStyle} />
+            <div style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={() => { setEditNoticeTarget(null); setShowCreateModal(true); }}
+              style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              공지 등록
+            </button>
+            <button
+              type="button"
+              onClick={() => { void handleDelete(); }}
+              disabled={selected.size === 0}
+              style={{ padding: "6px 14px", borderRadius: 7, border: "1px solid #e2e8f0", background: selected.size === 0 ? "#f8fafc" : "#fff", color: selected.size === 0 ? "#94a3b8" : "#ef4444", fontWeight: 600, fontSize: 13, cursor: selected.size === 0 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+            >
+              삭제
+            </button>
+            <div style={{ position: "relative" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                <path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <input
+                type="text"
+                placeholder="이름, 작성자, UUID, 본문 검색"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                style={{ paddingLeft: 29, paddingRight: 10, paddingTop: 6, paddingBottom: 6, borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: 13, color: "#1e293b", width: ADMIN_LIST_TOOLBAR_SEARCH_WIDTH_PX, outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => { void fetchNotices(); }}
+              disabled={loading}
+              title="새로고침"
+              style={{ width: 32, height: 32, borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: loading ? "#cbd5e1" : "#64748b", cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M20 9A8 8 0 0 0 6.93 5.41M4 15a8 8 0 0 0 13.07 3.59" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
           </div>
 
           {!loading && fetchError && (
@@ -395,7 +340,7 @@ export function NoticeClient() {
               {fetchError}
             </div>
           )}
-          {!loading && !fetchError && (
+          {!fetchError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table
                 style={{
@@ -412,13 +357,7 @@ export function NoticeClient() {
                   ))}
                 </colgroup>
                 <thead>
-                  <tr
-                    style={{
-                      background: "#f8fafc",
-                      borderTop: "1px solid #f1f5f9",
-                      borderBottom: "1px solid #e5e7eb",
-                    }}
-                  >
+                  <tr style={adminListTableTheadRowStyle}>
                     <th
                       style={{
                         ...thStyle,
@@ -426,21 +365,22 @@ export function NoticeClient() {
                         padding: noticeTbl.checkboxThPadding,
                         textAlign: "center",
                         verticalAlign: "middle",
+                        lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
+                        fontSize: 12,
                         position: "relative",
                         overflow: "hidden",
                       }}
                     >
-                      <div style={checkboxCellInner}>
-                        <input
-                          type="checkbox"
-                          checked={allPageSelected}
-                          ref={(el) => {
-                            if (el) el.indeterminate = somePageSelected && !allPageSelected;
-                          }}
-                          onChange={toggleAll}
-                          style={tableCheckboxInputStyle}
-                        />
-                      </div>
+                      <input
+                        type="checkbox"
+                        checked={allPageSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = somePageSelected && !allPageSelected;
+                        }}
+                        onChange={toggleAll}
+                        className={ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME}
+                        style={adminListTableCheckboxInputStyle}
+                      />
                       <AdminTableResizeHandle
                         ariaLabel={NOTICE_COL_RESIZE_LABELS[0]!}
                         onMouseDown={(e) => startNoticeColResize(0, e.clientX)}
@@ -534,7 +474,13 @@ export function NoticeClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pageItems.length === 0 ? (
+                  {loading && pageItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
+                        불러오는 중...
+                      </td>
+                    </tr>
+                  ) : pageItems.length === 0 ? (
                     <tr>
                       <td colSpan={7} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
                         {search ? "검색 결과가 없습니다." : "등록된 공지가 없습니다."}
@@ -569,17 +515,18 @@ export function NoticeClient() {
                               padding: noticeTbl.checkboxTdPadding,
                               textAlign: "center",
                               verticalAlign: "middle",
+                              lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
+                              fontSize: 12,
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div style={checkboxCellInner}>
-                              <input
-                                type="checkbox"
-                                checked={isSel}
-                                onChange={() => toggleRow(item.uuid)}
-                                style={tableCheckboxInputStyle}
-                              />
-                            </div>
+                            <input
+                              type="checkbox"
+                              checked={isSel}
+                              onChange={() => toggleRow(item.uuid)}
+                              className={ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME}
+                              style={adminListTableCheckboxInputStyle}
+                            />
                           </td>
                           <td
                             style={{
@@ -665,18 +612,8 @@ export function NoticeClient() {
             </div>
           )}
 
-          {!loading && !fetchError && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "14px 20px",
-                borderTop: "1px solid #e2e8f0",
-                gap: 12,
-                background: "#fafbfc",
-              }}
-            >
+          {!fetchError && (
+            <div style={adminListPanelFooterBarStyle}>
               <span style={{ fontSize: 13, color: "#94a3b8" }}>
                 총 {filtered.length.toLocaleString()}건
                 {selected.size > 0 && (
@@ -700,15 +637,7 @@ export function NoticeClient() {
                   setPageSize(Number(e.target.value));
                   setPage(1);
                 }}
-                style={{
-                  padding: "5px 8px",
-                  borderRadius: 6,
-                  border: "1px solid #e2e8f0",
-                  background: "#f8fafc",
-                  fontSize: 13,
-                  color: "#334155",
-                  cursor: "pointer",
-                }}
+                style={adminListPanelPageSizeSelectStyle}
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
                   <option key={n} value={n}>
@@ -1064,6 +993,8 @@ const thStyle: CSSProperties = {
   letterSpacing: "0.03em",
   textAlign: "center",
   whiteSpace: "nowrap",
+  verticalAlign: "middle",
+  lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
 };
 
 const tdStyle: CSSProperties = {
@@ -1080,20 +1011,3 @@ function noticeTdPad(pad?: string): CSSProperties {
   return pad ? { ...tdStyle, padding: pad } : tdStyle;
 }
 
-const checkboxCellInner: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-/** 18px 대비 약 5% 축소 */
-const tableCheckboxInputStyle: CSSProperties = {
-  width: 17,
-  height: 17,
-  margin: 0,
-  flexShrink: 0,
-  cursor: "pointer",
-  accentColor: "#0f172a",
-};

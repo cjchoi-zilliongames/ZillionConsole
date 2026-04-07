@@ -55,5 +55,7 @@ export type PersonalListEntry = {
   /** 다국어 제목/내용 목록 (없으면 단일 언어) */
   localeContents?: MailLocaleEntry[];
   claimedAt?: Timestamp;
+  /** 클라이언트가 수령 시 true (claimedAt 없을 때) */
+  isClaimed?: boolean;
   dismissedAt?: Timestamp;
 };

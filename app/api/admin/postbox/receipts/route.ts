@@ -10,6 +10,10 @@ import {
   COLLECTION_PERSONAL_MAIL_DISPATCHES,
 } from "@/lib/firestore-mail-schema";
 import { downloadRecipientList } from "@/lib/mail-dispatches-storage";
+import {
+  resolveGlobalReceiptMailId,
+  resolvePersonalReceiptDispatch,
+} from "@/lib/postbox-receipt-mail-id";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,7 +93,7 @@ function receiptFromPersonalListEntry(
   }
   const item = list.find(
     (e: unknown) => e && typeof e === "object" && String((e as { mailId?: string }).mailId) === mailId
-  ) as { claimedAt?: unknown; dismissedAt?: unknown } | undefined;
+  ) as { claimedAt?: unknown; dismissedAt?: unknown; isClaimed?: unknown } | undefined;
   if (!item) {
     return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
   }
@@ -100,6 +104,10 @@ function receiptFromPersonalListEntry(
   const claimedAt = toIso(item.claimedAt);
   if (claimedAt) {
     return { uid, displayName, type: "claimed", claimedAt, dismissedAt: null };
+  }
+  // 게임 클라: 직접/지정 우편은 claimedAt 대신 isClaimed: true
+  if (item.isClaimed === true) {
+    return { uid, displayName, type: "claimed", claimedAt: null, dismissedAt: null };
   }
   return { uid, displayName, type: "pending", claimedAt: null, dismissedAt: null };
 }
@@ -127,6 +135,7 @@ export async function GET(req: Request) {
       if (!postSnap.exists) {
         return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
       }
+      const receiptMailId = resolveGlobalReceiptMailId(postId, postSnap.data()!);
       targetAudience = "all";
 
       if (search) {
@@ -168,7 +177,7 @@ export async function GET(req: Request) {
           const refs = searchUids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
           const snaps = await db.getAll(...refs);
           receipts = searchUids.map((uid, i) =>
-            receiptFromPersonalMailDoc(uid, searchNames[uid] || "", snaps[i]?.data(), postId)
+            receiptFromPersonalMailDoc(uid, searchNames[uid] || "", snaps[i]?.data(), receiptMailId)
           );
         }
       } else {
@@ -203,17 +212,26 @@ export async function GET(req: Request) {
           const refs = uids.map((uid) => db.collection(COLLECTION_PERSONAL_MAILS).doc(uid));
           const snaps = await db.getAll(...refs);
           receipts = uids.map((uid, i) =>
-            receiptFromPersonalMailDoc(uid, displayNames[uid] || "", snaps[i]?.data(), postId)
+            receiptFromPersonalMailDoc(uid, displayNames[uid] || "", snaps[i]?.data(), receiptMailId)
           );
         }
       }
     } else if (postId.startsWith("pm_") || postId.startsWith("psj_")) {
-      const postSnap = await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId).get();
-      if (!postSnap.exists) {
+      const jobSnap = await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId).get();
+      if (!jobSnap.exists) {
+        return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
+      }
+      const jobData = jobSnap.data()!;
+      const { receiptMailId, dispatchDocId } = resolvePersonalReceiptDispatch(postId, jobData);
+      const dispatchSnap =
+        dispatchDocId === postId
+          ? jobSnap
+          : await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(dispatchDocId).get();
+      if (!dispatchSnap.exists) {
         return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
       }
       targetAudience = "specific";
-      const postData = postSnap.data()!;
+      const postData = dispatchSnap.data()!;
       let recipientEntries: Array<{ uid: string; displayName: string }>;
       if (typeof postData.recipientListPath === "string" && postData.recipientListPath) {
         recipientEntries = await downloadRecipientList(postData.recipientListPath);
@@ -244,7 +262,7 @@ export async function GET(req: Request) {
                 uid,
                 pickNickname(userSnaps[j]?.data()),
                 mailSnaps[j]?.data(),
-                postId
+                receiptMailId
               )
             )
           );

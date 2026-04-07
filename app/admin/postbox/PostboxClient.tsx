@@ -9,10 +9,19 @@ import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { PostRegisterModal } from "./components/PostRegisterModal";
 import {
+  ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX,
+  ADMIN_LIST_TOOLBAR_SEARCH_WIDTH_PX,
   ADMIN_POSTBOX_LIST_COL_DEFAULTS,
   ADMIN_POSTBOX_LIST_COL_MINS,
   ADMIN_POSTBOX_LIST_COL_STORAGE_KEY,
+  ADMIN_LIST_SELECT_COL_SYNC_STORAGE_KEY,
   adminListColBox,
+  adminListPanelFooterBarStyle,
+  adminListPanelPageSizeSelectStyle,
+  ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME,
+  ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX,
+  adminListTableCheckboxInputStyle,
+  adminListTableTheadRowStyle,
   postboxListTableLayout as postTbl,
 } from "@/lib/admin-list-table-layout";
 import { AdminTableResizeHandle } from "@/lib/admin-table-resize-handle";
@@ -65,7 +74,7 @@ function formatTarget(post: PostDoc): string {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const TAB_LABELS: { id: PostboxTab; label: string }[] = [
-  { id: "admin", label: "관리자 우편" },
+  { id: "admin", label: "즉시 발송" },
   { id: "scheduled", label: "예약 우편" },
   { id: "repeat", label: "반복 우편" },
   { id: "user", label: "유저 우편" },
@@ -153,15 +162,17 @@ export function PostboxClient() {
   const [scheduleJobs, setScheduleJobs] = useState<MailScheduleJob[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const scheduleFetchedRef = useRef(false);
 
-  const fetchScheduleJobs = useCallback(async () => {
-    setScheduleLoading(true);
+  const fetchScheduleJobs = useCallback(async (opts?: { soft?: boolean }) => {
+    if (!opts?.soft) setScheduleLoading(true);
     setScheduleError(null);
     try {
       const res = await authFetch("/api/admin/postbox/schedule");
       const data = await res.json() as { ok: boolean; jobs?: MailScheduleJob[]; error?: string };
       if (!data.ok) throw new Error(data.error ?? "목록 로드 실패");
       setScheduleJobs(data.jobs ?? []);
+      scheduleFetchedRef.current = true;
     } catch (e) {
       setScheduleError(e instanceof Error ? e.message : "오류가 발생했습니다.");
     } finally {
@@ -171,7 +182,7 @@ export function PostboxClient() {
 
   useEffect(() => {
     if (!bootstrapped || (activeTab !== "repeat" && activeTab !== "scheduled")) return;
-    void fetchScheduleJobs();
+    void fetchScheduleJobs({ soft: scheduleFetchedRef.current });
   }, [bootstrapped, activeTab, fetchScheduleJobs]);
 
   const handleCancelJob = useCallback(async (jobId: string) => {
@@ -198,6 +209,7 @@ export function PostboxClient() {
     storageKey: ADMIN_POSTBOX_LIST_COL_STORAGE_KEY,
     defaults: ADMIN_POSTBOX_LIST_COL_DEFAULTS,
     mins: ADMIN_POSTBOX_LIST_COL_MINS,
+    syncSelectColumnStorageKey: ADMIN_LIST_SELECT_COL_SYNC_STORAGE_KEY,
   });
 
   const fetchPosts = useCallback(async (opts?: { soft?: boolean }) => {
@@ -447,97 +459,15 @@ export function PostboxClient() {
       />
       <div style={{ padding: "19px 0 40px", width: "100%" }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 20 }}>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>우편</h1>
-            <p style={{ margin: "6px 0 0", fontSize: 13, color: "#94a3b8" }}>운영 우편 관리</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowRegisterModal(true)}
-            style={{
-              padding: "8px 18px", borderRadius: 8, border: "none",
-              background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
-            }}
-          >
-            + 우편 등록
-          </button>
-          {activeTab !== "repeat" && activeTab !== "scheduled" && (
-            <button
-              type="button"
-              onClick={() => { void handleDelete(); }}
-              disabled={selected.size === 0}
-              style={{
-                padding: "8px 18px", borderRadius: 8, border: "1px solid #e2e8f0",
-                background: selected.size === 0 ? "#f8fafc" : "#fff",
-                color: selected.size === 0 ? "#94a3b8" : "#ef4444",
-                fontWeight: 600, fontSize: 13,
-                cursor: selected.size === 0 ? "not-allowed" : "pointer",
-              }}
-            >
-              삭제{selected.size > 0 ? ` (${selected.size})` : ""}
-            </button>
-          )}
-          {(activeTab === "repeat" || activeTab === "scheduled") && (
-            <button
-              type="button"
-              onClick={() => { void handleDeleteSelectedScheduleJobs(); }}
-              disabled={selectedScheduleJobs.size === 0}
-              style={{
-                padding: "8px 18px", borderRadius: 8, border: "1px solid #e2e8f0",
-                background: selectedScheduleJobs.size === 0 ? "#f8fafc" : "#fff",
-                color: selectedScheduleJobs.size === 0 ? "#94a3b8" : "#ef4444",
-                fontWeight: 600, fontSize: 13,
-                cursor: selectedScheduleJobs.size === 0 ? "not-allowed" : "pointer",
-              }}
-            >
-              삭제{selectedScheduleJobs.size > 0 ? ` (${selectedScheduleJobs.size})` : ""}
-            </button>
-          )}
-          {/* Search */}
-          {activeTab !== "repeat" && activeTab !== "scheduled" && (
-            <div style={{ position: "relative" }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
-                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-                <path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              <input
-                type="text"
-                placeholder="제목, 발송인 검색"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                style={{
-                  paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
-                  borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc",
-                  fontSize: 13, color: "#1e293b", width: 200, outline: "none",
-                }}
-              />
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => { (activeTab === "repeat" || activeTab === "scheduled") ? void fetchScheduleJobs() : void fetchPosts(); }}
-            disabled={(activeTab === "repeat" || activeTab === "scheduled") ? scheduleLoading : loading}
-            title="새로고침"
-            style={{
-              width: 34, height: 34, borderRadius: 8, border: "1px solid #e2e8f0",
-              background: "#f8fafc", color: (activeTab === "repeat" ? scheduleLoading : loading) ? "#cbd5e1" : "#64748b",
-              cursor: (activeTab === "repeat" ? scheduleLoading : loading) ? "wait" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-              <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M20 9A8 8 0 0 0 6.93 5.41M4 15a8 8 0 0 0 13.07 3.59" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>우편</h1>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "#94a3b8" }}>운영 우편 관리</p>
         </div>
 
         {/* Panel */}
-        <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column", height: "calc(100vh - 280px)", maxHeight: "calc(100vh - 280px)" }}>
-          {/* Tabs */}
-          <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", padding: "0 20px" }}>
+        <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column", height: "calc(100vh - 240px)", maxHeight: "calc(100vh - 240px)" }}>
+          {/* Tabs + Actions */}
+          <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #e5e7eb", padding: "0 16px 0 20px", gap: 8, flexShrink: 0, minHeight: ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX }}>
             {TAB_LABELS.map(({ id, label }) => {
               const soon = COMING_SOON_TABS.has(id);
               const active = activeTab === id && !soon;
@@ -570,6 +500,66 @@ export function PostboxClient() {
                 </button>
               );
             })}
+
+            {/* Spacer + Action buttons */}
+            {!COMING_SOON_TABS.has(activeTab) && (
+              <>
+                <div style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterModal(true)}
+                  style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}
+                >
+                  우편 등록
+                </button>
+                {(activeTab === "scheduled" || activeTab === "repeat") ? (
+                  <button
+                    type="button"
+                    onClick={() => { void handleDeleteSelectedScheduleJobs(); }}
+                    disabled={selectedScheduleJobs.size === 0}
+                    style={{ padding: "6px 14px", borderRadius: 7, border: "1px solid #e2e8f0", background: selectedScheduleJobs.size === 0 ? "#f8fafc" : "#fff", color: selectedScheduleJobs.size === 0 ? "#94a3b8" : "#ef4444", fontWeight: 600, fontSize: 13, cursor: selectedScheduleJobs.size === 0 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+                  >
+                    삭제
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { void handleDelete(); }}
+                    disabled={selected.size === 0}
+                    style={{ padding: "6px 14px", borderRadius: 7, border: "1px solid #e2e8f0", background: selected.size === 0 ? "#f8fafc" : "#fff", color: selected.size === 0 ? "#94a3b8" : "#ef4444", fontWeight: 600, fontSize: 13, cursor: selected.size === 0 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+                  >
+                    삭제
+                  </button>
+                )}
+                {activeTab === "admin" && (
+                  <div style={{ position: "relative" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
+                      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                      <path d="M16.5 16.5L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                    <input
+                      type="text"
+                      placeholder="제목, 발송인, UID 검색"
+                      value={search}
+                      onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                      style={{ paddingLeft: 29, paddingRight: 10, paddingTop: 6, paddingBottom: 6, borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: 13, color: "#1e293b", width: ADMIN_LIST_TOOLBAR_SEARCH_WIDTH_PX, outline: "none", boxSizing: "border-box" }}
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { void ((activeTab === "scheduled" || activeTab === "repeat") ? fetchScheduleJobs() : fetchPosts()); }}
+                  disabled={(activeTab === "scheduled" || activeTab === "repeat") ? scheduleLoading : loading}
+                  title="새로고침"
+                  style={{ width: 32, height: 32, borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: loading || scheduleLoading ? "#cbd5e1" : "#64748b", cursor: loading || scheduleLoading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M20 9A8 8 0 0 0 6.93 5.41M4 15a8 8 0 0 0 13.07 3.59" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </>
+            )}
           </div>
 
           {/* Error */}
@@ -588,7 +578,7 @@ export function PostboxClient() {
           )}
 
           {/* Schedule Jobs Table (예약/반복 탭) */}
-          {(activeTab === "repeat" || activeTab === "scheduled") && !scheduleLoading && !scheduleError && (
+          {(activeTab === "repeat" || activeTab === "scheduled") && !scheduleError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table style={{ width: "100%", minWidth: postTableMinW, tableLayout: "fixed", borderCollapse: "collapse", fontSize: 13 }}>
                 <colgroup>
@@ -603,7 +593,7 @@ export function PostboxClient() {
                   <col style={{ width: postColW[8] }} />
                 </colgroup>
                 <thead>
-                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e5e7eb" }}>
+                  <tr style={adminListTableTheadRowStyle}>
                     <th
                       style={{
                         ...thStyle,
@@ -611,20 +601,21 @@ export function PostboxClient() {
                         padding: postTbl.checkboxThPadding,
                         textAlign: "center",
                         verticalAlign: "middle",
+                        lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
+                        fontSize: 12,
                         position: "relative",
                         overflow: "hidden",
                       }}
                     >
-                      <div style={checkboxCellInner}>
-                        <input
-                          type="checkbox"
-                          checked={allScheduleSelected}
-                          ref={(el) => { if (el) el.indeterminate = someScheduleSelected && !allScheduleSelected; }}
-                          onChange={toggleAllSchedule}
-                          style={tableCheckboxInputStyle}
-                          aria-label="반복 우편 전체 선택"
-                        />
-                      </div>
+                      <input
+                        type="checkbox"
+                        checked={allScheduleSelected}
+                        ref={(el) => { if (el) el.indeterminate = someScheduleSelected && !allScheduleSelected; }}
+                        onChange={toggleAllSchedule}
+                        className={ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME}
+                        style={adminListTableCheckboxInputStyle}
+                        aria-label="반복 우편 전체 선택"
+                      />
                       <AdminTableResizeHandle
                         ariaLabel={POSTBOX_COL_RESIZE_LABELS[0]!}
                         onMouseDown={(e) => startPostColResize(0, e.clientX)}
@@ -666,35 +657,97 @@ export function PostboxClient() {
                         ...postThPad(postTbl.columnPadding.target.th),
                         ...adminListColBox(postColW[3]!),
                         textAlign: "center",
+                        position: "relative",
+                        overflow: "hidden",
                       }}
                     >
                       대상
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[3]!}
+                        onMouseDown={(e) => startPostColResize(3, e.clientX)}
+                      />
                     </th>
                     <th
                       style={{
                         ...postThPad(postTbl.columnPadding.sender.th),
                         ...adminListColBox(postColW[4]!),
                         textAlign: "center",
+                        position: "relative",
+                        overflow: "hidden",
                       }}
                     >
                       수신 인원
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[4]!}
+                        onMouseDown={(e) => startPostColResize(4, e.clientX)}
+                      />
                     </th>
                     <th
                       style={{
-                        ...postThPad(postTbl.columnPadding.reward.th),
+                        ...thStyle,
                         ...adminListColBox(postColW[5]!),
                         textAlign: "center",
+                        position: "relative",
+                        overflow: "hidden",
+                        padding: postTbl.scheduleRepeatThPadding,
                       }}
                     >
                       {activeTab === "scheduled" ? "예약 시각" : "반복 조건"}
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[5]!}
+                        onMouseDown={(e) => startPostColResize(5, e.clientX)}
+                      />
                     </th>
-                    <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>발송일</th>
-                    <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>만료일</th>
-                    <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>상태</th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.sentAt.th),
+                        ...adminListColBox(postColW[6]!),
+                        textAlign: "center",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {activeTab === "scheduled" ? "예약 일시" : "발송일"}
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[6]!}
+                        onMouseDown={(e) => startPostColResize(6, e.clientX)}
+                      />
+                    </th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.expiresAt.th),
+                        ...adminListColBox(postColW[7]!),
+                        textAlign: "center",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      만료일
+                      <AdminTableResizeHandle
+                        ariaLabel={POSTBOX_COL_RESIZE_LABELS[7]!}
+                        onMouseDown={(e) => startPostColResize(7, e.clientX)}
+                      />
+                    </th>
+                    <th
+                      style={{
+                        ...postThPad(postTbl.columnPadding.status.th),
+                        ...adminListColBox(postColW[8]!),
+                        textAlign: "center",
+                        overflow: "hidden",
+                      }}
+                    >
+                      상태
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat")).length === 0 ? (
+                  {scheduleLoading && scheduleJobs.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
+                        불러오는 중...
+                      </td>
+                    </tr>
+                  ) : scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat")).length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
                         {activeTab === "scheduled" ? "등록된 예약 우편이 없습니다." : "등록된 반복 우편이 없습니다."}
@@ -726,18 +779,19 @@ export function PostboxClient() {
                               padding: postTbl.checkboxTdPadding,
                               textAlign: "center",
                               verticalAlign: "middle",
+                              lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
+                              fontSize: 12,
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div style={checkboxCellInner}>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleScheduleRow(job.jobId)}
-                                style={tableCheckboxInputStyle}
-                                aria-label={`반복 우편 ${job.title} 선택`}
-                              />
-                            </div>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleScheduleRow(job.jobId)}
+                              className={ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME}
+                              style={adminListTableCheckboxInputStyle}
+                              aria-label={`반복 우편 ${job.title} 선택`}
+                            />
                           </td>
                           <td
                             style={{
@@ -789,22 +843,56 @@ export function PostboxClient() {
                           </td>
                           <td
                             style={{
-                              ...postTdPad(postTbl.columnPadding.reward.td),
+                              ...postTdPad(postTbl.columnPadding.sentAt.td),
                               ...adminListColBox(postColW[5]!),
                               textAlign: "center",
+                              verticalAlign: "middle",
                               color: "#475569",
                               fontSize: 12,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              padding: postTbl.scheduleRepeatTdPadding,
                             }}
                           >
                             {repeatCondition}
                           </td>
-                          <td style={{ padding: "10px 14px", color: "#475569", fontSize: 12, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                            {sendAt ? sendAt.toLocaleDateString("ko-KR") : "—"}
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.sentAt.td),
+                              ...adminListColBox(postColW[6]!),
+                              textAlign: "center",
+                              color: "#475569",
+                              fontSize: 12,
+                              whiteSpace: "nowrap",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {sendAt ? (activeTab === "scheduled"
+                              ? sendAt.toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+                              : sendAt.toLocaleDateString("ko-KR")) : "—"}
                           </td>
-                          <td style={{ padding: "10px 14px", color: "#475569", fontSize: 12, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.expiresAt.td),
+                              ...adminListColBox(postColW[7]!),
+                              textAlign: "center",
+                              color: "#475569",
+                              fontSize: 12,
+                              whiteSpace: "nowrap",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
                             {expireAt ? expireAt.toLocaleDateString("ko-KR") : "—"}
                           </td>
-                          <td style={{ padding: "10px 14px" }}>
+                          <td
+                            style={{
+                              ...postTdPad(postTbl.columnPadding.status.td),
+                              ...adminListColBox(postColW[8]!),
+                              textAlign: "center",
+                              verticalAlign: "middle",
+                            }}
+                          >
                             <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: `${statusColor}18`, color: statusColor }}>
                               {statusLabel}
                             </span>
@@ -819,7 +907,7 @@ export function PostboxClient() {
           )}
 
           {/* Admin Table */}
-          {activeTab !== "repeat" && activeTab !== "scheduled" && !loading && !fetchError && (
+          {activeTab !== "repeat" && activeTab !== "scheduled" && !fetchError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table
                 style={{
@@ -836,7 +924,7 @@ export function PostboxClient() {
                   ))}
                 </colgroup>
                 <thead>
-                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e5e7eb" }}>
+                  <tr style={adminListTableTheadRowStyle}>
                     <th
                       style={{
                         ...thStyle,
@@ -844,19 +932,20 @@ export function PostboxClient() {
                         padding: postTbl.checkboxThPadding,
                         textAlign: "center",
                         verticalAlign: "middle",
+                        lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
+                        fontSize: 12,
                         position: "relative",
                         overflow: "hidden",
                       }}
                     >
-                      <div style={checkboxCellInner}>
-                        <input
-                          type="checkbox"
-                          checked={allPageSelected}
-                          ref={(el) => { if (el) el.indeterminate = somePageSelected && !allPageSelected; }}
-                          onChange={toggleAll}
-                          style={tableCheckboxInputStyle}
-                        />
-                      </div>
+                      <input
+                        type="checkbox"
+                        checked={allPageSelected}
+                        ref={(el) => { if (el) el.indeterminate = somePageSelected && !allPageSelected; }}
+                        onChange={toggleAll}
+                        className={ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME}
+                        style={adminListTableCheckboxInputStyle}
+                      />
                       <AdminTableResizeHandle
                         ariaLabel={POSTBOX_COL_RESIZE_LABELS[0]!}
                         onMouseDown={(e) => startPostColResize(0, e.clientX)}
@@ -981,7 +1070,13 @@ export function PostboxClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pageItems.length === 0 ? (
+                  {loading && pageItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
+                        불러오는 중...
+                      </td>
+                    </tr>
+                  ) : pageItems.length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
                         {search ? "검색 결과가 없습니다." : "등록된 우편이 없습니다."}
@@ -1024,17 +1119,18 @@ export function PostboxClient() {
                               padding: postTbl.checkboxTdPadding,
                               textAlign: "center",
                               verticalAlign: "middle",
+                              lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
+                              fontSize: 12,
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div style={checkboxCellInner}>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleRow(item.postId)}
-                                style={tableCheckboxInputStyle}
-                              />
-                            </div>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleRow(item.postId)}
+                              className={ADMIN_LIST_TABLE_CHECKBOX_CLASSNAME}
+                              style={adminListTableCheckboxInputStyle}
+                            />
                           </td>
                           <td
                             style={{
@@ -1156,8 +1252,8 @@ export function PostboxClient() {
           )}
 
           {/* Pagination (관리자 탭만) */}
-          {activeTab !== "repeat" && activeTab !== "scheduled" && !loading && !fetchError && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #f1f5f9", gap: 12 }}>
+          {activeTab !== "repeat" && activeTab !== "scheduled" && !fetchError && (
+            <div style={adminListPanelFooterBarStyle}>
               <span style={{ fontSize: 13, color: "#94a3b8" }}>
                 {activeTab === "admin" && postsHasMore
                   ? `불러온 ${filtered.length.toLocaleString()}건 · 서버에 더 있음`
@@ -1201,10 +1297,7 @@ export function PostboxClient() {
               <select
                 value={pageSize}
                 onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                style={{
-                  padding: "5px 8px", borderRadius: 6, border: "1px solid #e2e8f0",
-                  background: "#f8fafc", fontSize: 13, color: "#334155", cursor: "pointer",
-                }}
+                style={adminListPanelPageSizeSelectStyle}
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
                   <option key={n} value={n}>{n}개씩 보기</option>
@@ -1245,7 +1338,10 @@ export function PostboxClient() {
           onClose={() => setShowRegisterModal(false)}
           onCreated={async () => {
             setShowRegisterModal(false);
-            await fetchPosts({ soft: true });
+            await Promise.all([
+              fetchPosts({ soft: true }),
+              fetchScheduleJobs({ soft: true }),
+            ]);
           }}
         />
       )}
@@ -1877,6 +1973,8 @@ const thStyle: React.CSSProperties = {
   letterSpacing: "0.03em",
   textAlign: "center",
   whiteSpace: "nowrap",
+  verticalAlign: "middle",
+  lineHeight: `${ADMIN_LIST_TABLE_HEADER_LINE_HEIGHT_PX}px`,
 };
 
 const tdStyle: React.CSSProperties = {
@@ -1892,21 +1990,3 @@ function postThPad(pad?: string): React.CSSProperties {
 function postTdPad(pad?: string): React.CSSProperties {
   return pad ? { ...tdStyle, padding: pad } : tdStyle;
 }
-
-const checkboxCellInner: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-/** 18px 대비 약 5% 축소 */
-const tableCheckboxInputStyle: React.CSSProperties = {
-  width: 17,
-  height: 17,
-  margin: 0,
-  flexShrink: 0,
-  cursor: "pointer",
-  accentColor: "#0f172a",
-};
