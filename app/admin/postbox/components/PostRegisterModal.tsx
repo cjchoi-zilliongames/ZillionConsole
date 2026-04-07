@@ -1100,7 +1100,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   const { bootstrapped } = useAdminSession();
 
   const scheduledPickerRef = useRef<DatePickerInstance>(null);
-  const repeatUtcPickerRef = useRef<DatePickerInstance>(null);
   const expiryPickerRef = useRef<DatePickerInstance>(null);
 
   const loadPostboxCharts = useCallback(async () => {
@@ -1146,19 +1145,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   }, []);
 
   /** 반복 발송 시각 피커: 오늘(UTC) 날짜 + repeatTime — 표시용, API는 HH:mm(UTC)만 사용 */
-  const repeatPickerSelected = useMemo(() => {
-    const now = new Date();
-    const [hh, mm] = repeatTime.split(":").map((x) => parseInt(x, 10));
-    return new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      Number.isFinite(hh) ? hh : 0,
-      Number.isFinite(mm) ? mm : 0,
-      0,
-      0
-    ));
-  }, [repeatTime]);
 
   const customExpiryFloor = useMemo(
     () => expiryPickerFloor(dispatchType, scheduledAtDate, repeatDays, repeatTime),
@@ -1600,30 +1586,26 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                           );
                         })}
                       </div>
-                      <DatePicker
-                        ref={repeatUtcPickerRef}
-                        selected={repeatPickerSelected}
-                        onChange={(d: Date | null) => {
-                          if (!d) return;
-                          setRepeatTime(
-                            `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
-                          );
+                      <input
+                        type="time"
+                        value={repeatTime}
+                        onChange={(e) => setRepeatTime(e.target.value)}
+                        aria-label="반복 발송 시각 (UTC)"
+                        style={{
+                          width: "5.5rem",
+                          minHeight: 33,
+                          padding: "6px 8px",
+                          borderRadius: 8,
+                          border: "1px solid #cbd5e1",
+                          fontSize: 13,
+                          fontFamily: "inherit",
+                          color: "#0f172a",
+                          background: "#fff",
+                          cursor: "pointer",
+                          fontVariantNumeric: "tabular-nums",
+                          outline: "none",
+                          boxSizing: "border-box",
                         }}
-                        onSelect={(d) => closeDatePickerIfReselect(repeatUtcPickerRef, repeatPickerSelected, d)}
-                        timeZone="UTC"
-                        locale="ko"
-                        showTimeSelect
-                        timeIntervals={1}
-                        dateFormat="HH:mm"
-                        timeFormat="HH:mm"
-                        timeCaption="시각"
-                        popperPlacement="bottom-start"
-                        popperModifiers={scheduleDatePickerPopperModifiers}
-                        showPopperArrow={false}
-                        popperClassName="post-register-datepicker-popper post-register-repeat-datepicker-popper"
-                        wrapperClassName="post-register-datepicker-wrap post-register-repeat-utc-time-wrap"
-                        className="post-register-datepicker-input"
-                        ariaLabel="반복 발송 시각"
                       />
                     </div>
                   </>

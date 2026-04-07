@@ -532,7 +532,7 @@ export function NoticeCreateModal({
                       </RadioChip>
                     </div>
                   </div>
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, minHeight: 55 }}>
                     {postSchedule === "scheduled" ? (
                       <>
                         <MetaLabel>
@@ -638,7 +638,7 @@ export function NoticeCreateModal({
                                   textAlign: "left",
                                   padding: "8px 10px",
                                   borderRadius: 10,
-                                  border: active ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                                  border: active ? "2px solid #2563eb" : "2px solid #e2e8f0",
                                   background: active ? "#eff6ff" : "#fff",
                                   cursor: "pointer",
                                   fontSize: 12,
@@ -950,7 +950,7 @@ function RadioChip({
       style={{
         padding: compact ? "5px 12px" : "8px 16px",
         borderRadius: 999,
-        border: active ? "2px solid #0f172a" : "1px solid #e2e8f0",
+        border: active ? "2px solid #0f172a" : "2px solid #e2e8f0",
         background: active ? "#0f172a" : "#fff",
         color: active ? "#fff" : "#64748b",
         fontWeight: 600,
