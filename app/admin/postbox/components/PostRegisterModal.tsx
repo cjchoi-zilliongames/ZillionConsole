@@ -9,8 +9,10 @@ import {
   useRef,
   type FormEvent,
   type MouseEvent,
+  type RefObject,
 } from "react";
 import DatePicker, { registerLocale } from "react-datepicker";
+import { isEqual } from "date-fns";
 import { ko } from "date-fns/locale";
 import { offset } from "@floating-ui/react";
 import "react-datepicker/dist/react-datepicker.css";
@@ -29,6 +31,20 @@ import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
 import { computeNextRunAt, type RepeatDay } from "@/lib/postbox-compute-next-run";
 
 registerLocale("ko", ko);
+
+type DatePickerInstance = InstanceType<typeof DatePicker>;
+
+/** 캘린더에서 이미 선택된 날짜·시각을 다시 누르면 팝업 닫기(react-datepicker는 이 경우 onChange는 생략되고 onSelect만 호출됨) */
+function closeDatePickerIfReselect(
+  pickerRef: RefObject<DatePickerInstance | null>,
+  selected: Date | null | undefined,
+  picked: Date | null,
+) {
+  if (!picked || !selected) return;
+  if (isEqual(selected, picked)) {
+    pickerRef.current?.setOpen(false);
+  }
+}
 
 /** 예약 시각 피커: 입력 왼쪽 정렬 + 살짝 왼쪽으로 당김 */
 const scheduleDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
@@ -1083,6 +1099,10 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
   const { bootstrapped } = useAdminSession();
 
+  const scheduledPickerRef = useRef<DatePickerInstance>(null);
+  const repeatUtcPickerRef = useRef<DatePickerInstance>(null);
+  const expiryPickerRef = useRef<DatePickerInstance>(null);
+
   const loadPostboxCharts = useCallback(async () => {
     setPostboxChartsLoading(true);
     try {
@@ -1113,6 +1133,12 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   useEffect(() => {
     if (dispatchType !== "scheduled") return;
     setScheduledAtDate((prev) => clampScheduledDate(prev));
+  }, [dispatchType]);
+
+  // 반복 발송: 만료는 기간(일) 토글만 — 만료 시각 피커 비활성, custom이면 프리셋으로 복귀
+  useEffect(() => {
+    if (dispatchType !== "repeat") return;
+    setExpiryPreset((p) => (p === "custom" ? "7" : p));
   }, [dispatchType]);
 
   const filterScheduledTime = useCallback((time: Date) => {
@@ -1311,22 +1337,18 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       }
     }
     if (dispatchType === "repeat" && repeatDays.length === 0) {
-      setError("발송 요일을 최소 하나 선택해 주세요.");
+      setError("반복 주기에서 요일을 최소 하나 선택해 주세요.");
       return;
     }
 
-    if (expiryPreset === "custom" && dispatchType !== "immediate") {
+    if (expiryPreset === "custom" && dispatchType === "scheduled") {
       const customEnd = new Date(customExpiry).getTime();
       if (!Number.isFinite(customEnd)) {
         setError("만료 시각(직접 입력)을 올바르게 설정해 주세요.");
         return;
       }
-      const dispatchStart =
-        dispatchType === "scheduled"
-          ? scheduledAtDate.getTime()
-          : computeNextRunAt(repeatDays, repeatTime).getTime();
-      if (customEnd <= dispatchStart) {
-        setError("만료 시각은 발송 시각(또는 첫 반복 발송 시각)보다 이후여야 합니다.");
+      if (customEnd <= scheduledAtDate.getTime()) {
+        setError("만료 시각은 발송 시각보다 이후여야 합니다.");
         return;
       }
     }
@@ -1386,13 +1408,9 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         if (!data.ok) throw new Error(data.error ?? "등록 실패");
       } else {
         let expiresAfterMsPayload = computeExpiresAfterMs();
-        if (expiryPreset === "custom") {
+        if (expiryPreset === "custom" && dispatchType === "scheduled") {
           const customEnd = new Date(customExpiry).getTime();
-          if (dispatchType === "scheduled") {
-            expiresAfterMsPayload = customEnd - scheduledAtDate.getTime();
-          } else {
-            expiresAfterMsPayload = customEnd - computeNextRunAt(repeatDays, repeatTime).getTime();
-          }
+          expiresAfterMsPayload = customEnd - scheduledAtDate.getTime();
         }
         const res = await authFetch("/api/admin/postbox/schedule", {
           method: "POST",
@@ -1480,14 +1498,14 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: "20px 24px 24px" }}>
-          {/* 발송일 | 발송 시각·요일+UTC시각 · 만료기간 | 만료 시간(표시) — 반복 포함 */}
+          {/* 발송일 | 발송 시각·반복 주기+시각 · 만료기간 | 만료 시간 — 반복 포함 */}
           <div style={{ marginBottom: 16 }}>
             <div
               style={{
                 display: "grid",
                 gridTemplateColumns: "auto minmax(0, 1fr)",
                 columnGap: 24,
-                rowGap: 10,
+                rowGap: 20,
                 alignItems: "start",
               }}
             >
@@ -1515,10 +1533,12 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                       <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 12 }}>(현재 시각 이후만 설정 가능)</span>
                     </label>
                     <DatePicker
+                      ref={scheduledPickerRef}
                       selected={scheduledAtDate}
                       onChange={(d: Date | null) => {
                         if (d) setScheduledAtDate(clampScheduledDate(d));
                       }}
+                      onSelect={(d) => closeDatePickerIfReselect(scheduledPickerRef, scheduledAtDate, d)}
                       locale="ko"
                       showTimeSelect
                       timeIntervals={1}
@@ -1539,8 +1559,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 {dispatchType === "repeat" && (
                   <>
                     <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                      발송 요일
-                      <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 11, marginLeft: 6 }}>(UTC)</span>
+                      반복 주기
                     </label>
                     <div
                       style={{
@@ -1562,13 +1581,13 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                                 isOn ? prev.filter((d) => d !== day) : [...prev, day]
                               )}
                               style={{
-                                padding: "4px 7px",
-                                borderRadius: 6,
+                                padding: "6px 10px",
+                                borderRadius: 8,
                                 border: isOn ? "1.5px solid #0f172a" : "1.5px solid #e2e8f0",
                                 background: isOn ? "#0f172a" : "#fff",
                                 color: isOn ? "#fff" : "#475569",
                                 fontWeight: isOn ? 700 : 500,
-                                fontSize: 12,
+                                fontSize: 13,
                                 cursor: "pointer",
                                 transition: "all 0.1s",
                               }}
@@ -1579,6 +1598,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                         })}
                       </div>
                       <DatePicker
+                        ref={repeatUtcPickerRef}
                         selected={repeatPickerSelected}
                         onChange={(d: Date | null) => {
                           if (!d) return;
@@ -1586,6 +1606,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                             `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
                           );
                         }}
+                        onSelect={(d) => closeDatePickerIfReselect(repeatUtcPickerRef, repeatPickerSelected, d)}
                         timeZone="UTC"
                         locale="ko"
                         showTimeSelect
@@ -1599,7 +1620,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                         popperClassName="post-register-datepicker-popper post-register-repeat-datepicker-popper"
                         wrapperClassName="post-register-datepicker-wrap post-register-repeat-utc-time-wrap"
                         className="post-register-datepicker-input"
-                        ariaLabel="발송 시각 (UTC)"
+                        ariaLabel="반복 발송 시각"
                       />
                     </div>
                   </>
@@ -1619,18 +1640,18 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               </div>
               <div style={{ minWidth: 0 }}>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                  만료 시간{" "}
-                  <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 12 }}>
-                    (발송·첫 실행 시각 이후)
-                  </span>
+                  만료 시간
                 </label>
                 <DatePicker
+                  ref={expiryPickerRef}
+                  disabled={dispatchType === "repeat"}
                   selected={expiresAtPickerSelected}
                   onChange={(d: Date | null) => {
                     if (!d) return;
                     setExpiryPreset("custom");
                     setCustomExpiry(toDateTimeLocalValue(clampCustomExpiryToFloor(d, customExpiryFloor)));
                   }}
+                  onSelect={(d) => closeDatePickerIfReselect(expiryPickerRef, expiresAtPickerSelected, d)}
                   openToDate={customExpiryFloor}
                   locale="ko"
                   showTimeSelect
@@ -2010,50 +2031,49 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 직접 입력
               </ToggleBtn>
             </div>
-            {audienceMode === "all" && (
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
-                모든 유저를 대상으로 발송
-              </p>
-            )}
-            {audienceMode === "specific" && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {pickedUsers.length > 0 ? (
-                  <span
-                    title={pickedUsers.map((u) => `${u.label} (${u.uid})`).join("\n")}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 33 }}>
+              {audienceMode === "all" ? (
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>모든 유저를 대상으로 발송</span>
+              ) : (
+                <>
+                  {pickedUsers.length > 0 ? (
+                    <span
+                      title={pickedUsers.map((u) => `${u.label} (${u.uid})`).join("\n")}
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: "#0f172a",
+                        background: "#f1f5f9",
+                        padding: "5px 12px",
+                        borderRadius: 20,
+                        cursor: "default",
+                        userSelect: "none",
+                      }}
+                    >
+                      👥 {pickedUsers.length}명 선택됨
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>아직 선택된 유저가 없습니다.</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPicker(true)}
                     style={{
-                      fontSize: 13,
-                      fontWeight: 600,
+                      padding: "5px 14px",
+                      borderRadius: 8,
+                      border: "1.5px solid #0f172a",
+                      background: "#fff",
                       color: "#0f172a",
-                      background: "#f1f5f9",
-                      padding: "5px 12px",
-                      borderRadius: 20,
-                      cursor: "default",
-                      userSelect: "none",
+                      fontWeight: 600,
+                      fontSize: 12,
+                      cursor: "pointer",
                     }}
                   >
-                    👥 {pickedUsers.length}명 선택됨
-                  </span>
-                ) : (
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>아직 선택된 유저가 없습니다.</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowUserPicker(true)}
-                  style={{
-                    padding: "5px 14px",
-                    borderRadius: 8,
-                    border: "1.5px solid #0f172a",
-                    background: "#fff",
-                    color: "#0f172a",
-                    fontWeight: 600,
-                    fontSize: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  {pickedUsers.length > 0 ? "수정" : "+ 유저 선택"}
-                </button>
-              </div>
-            )}
+                    {pickedUsers.length > 0 ? "수정" : "+ 유저 선택"}
+                  </button>
+                </>
+              )}
+            </div>
           </FormRow>
 
           {/* Error */}
@@ -2220,7 +2240,7 @@ const inputStyle: React.CSSProperties = {
   padding: "8px 12px",
   borderRadius: 8,
   border: "1px solid #e2e8f0",
-  background: "#f8fafc",
+  background: "#fff",
   fontSize: 13,
   color: "#1e293b",
   outline: "none",

@@ -77,7 +77,8 @@ input.admin-list-table-checkbox[type="checkbox"] {
   min-width: 20rem;
   max-width: 100%;
   field-sizing: content;
-  padding: 8px 38px 8px 12px;
+  min-height: 33px;
+  padding: 6px 38px 6px 12px;
   border-radius: 8px;
   border: 1px solid #cbd5e1;
   background-color: #fff;
@@ -129,11 +130,10 @@ input.admin-list-table-checkbox[type="checkbox"] {
   min-width: 4.5rem;
   width: 4.5rem;
   max-width: 4.5rem;
-  min-height: 34px;
   padding: 6px 4px;
   text-align: center;
   field-sizing: fixed;
-  border-radius: 6px;
+  border-radius: 8px;
   background-image: none;
 }
 
