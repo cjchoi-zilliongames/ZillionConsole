@@ -1533,8 +1533,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 {dispatchType === "scheduled" && (
                   <>
                     <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                      발송 시각{" "}
-                      <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 12 }}>(현재 시각 이후만 설정 가능)</span>
+                      발송 시각
                     </label>
                     <DatePicker
                       ref={scheduledPickerRef}
@@ -2036,43 +2035,21 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               {audienceMode === "all" ? (
                 <span style={{ fontSize: 12, color: "#94a3b8" }}>모든 유저를 대상으로 발송</span>
               ) : (
-                <>
-                  {pickedUsers.length > 0 ? (
-                    <span
-                      title={pickedUsers.map((u) => `${u.label} (${u.uid})`).join("\n")}
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: "#0f172a",
-                        background: "#f1f5f9",
-                        padding: "5px 12px",
-                        borderRadius: 20,
-                        cursor: "default",
-                        userSelect: "none",
-                      }}
-                    >
-                      👥 {pickedUsers.length}명 선택됨
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 12, color: "#94a3b8" }}>아직 선택된 유저가 없습니다.</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setShowUserPicker(true)}
-                    style={{
-                      padding: "5px 14px",
-                      borderRadius: 8,
-                      border: "1.5px solid #0f172a",
-                      background: "#fff",
-                      color: "#0f172a",
-                      fontWeight: 600,
-                      fontSize: 12,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {pickedUsers.length > 0 ? "수정" : "+ 유저 선택"}
-                  </button>
-                </>
+                <span
+                  title={pickedUsers.map((u) => `${u.label} (${u.uid})`).join("\n")}
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#0f172a",
+                    background: "#f1f5f9",
+                    padding: "5px 12px",
+                    borderRadius: 20,
+                    cursor: "default",
+                    userSelect: "none",
+                  }}
+                >
+                  👥 {pickedUsers.length}명 선택됨
+                </span>
               )}
             </div>
           </FormRow>
@@ -2142,7 +2119,10 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           pickedUsers={pickedUsers}
           onAdd={addPickedUser}
           onRemove={removePickedUser}
-          onClose={() => setShowUserPicker(false)}
+          onClose={() => {
+            setShowUserPicker(false);
+            if (pickedUsers.length === 0) setAudienceMode("all");
+          }}
         />
       )}
       {showChartPicker && (
