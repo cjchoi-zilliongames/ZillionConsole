@@ -10,12 +10,8 @@ import {
   type PersonalListEntry,
   type MailRewardStored,
 } from "@/lib/firestore-mail-schema";
-import { uploadRecipientList } from "@/lib/mail-dispatches-storage";
-import {
-  COLLECTION_MAIL_SCHEDULE_JOBS,
-  computeNextRunAt,
-  type RepeatDay,
-} from "@/app/api/admin/postbox/schedule/route";
+import { downloadRecipientList, uploadRecipientList } from "@/lib/mail-dispatches-storage";
+import { computeNextRunAt, type RepeatDay } from "@/app/api/admin/postbox/schedule/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,66 +53,67 @@ async function writePersonalListBatch(
   }
 }
 
-export async function GET(req: Request) {
-  // Vercel Cron 인증: CRON_SECRET 환경변수 또는 x-vercel-cron 헤더
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers.get("authorization");
-    const vercelCronHeader = req.headers.get("x-vercel-cron");
-    if (authHeader !== `Bearer ${cronSecret}` && !vercelCronHeader) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-  }
+async function dispatchJobs(
+  db: Firestore,
+  collection: typeof COLLECTION_GLOBAL_MAILS | typeof COLLECTION_PERSONAL_MAIL_DISPATCHES,
+  now: Date
+): Promise<{ dispatched: number; anySignal: boolean }> {
+  const isGlobal = collection === COLLECTION_GLOBAL_MAILS;
 
-  try {
-    const db = getFirestoreDb();
-    const now = new Date();
+  const snap = await db
+    .collection(collection)
+    .where("scheduleType", "in", ["scheduled", "repeat"])
+    .where("scheduleStatus", "==", "pending")
+    .where("nextRunAt", "<=", Timestamp.fromDate(now))
+    .limit(50)
+    .get();
 
-    // nextRunAt <= now 인 작업 조회 (status는 코드에서 필터)
-    const snap = await db
-      .collection(COLLECTION_MAIL_SCHEDULE_JOBS)
-      .where("nextRunAt", "<=", Timestamp.fromDate(now))
-      .limit(50)
-      .get();
+  if (snap.empty) return { dispatched: 0, anySignal: false };
 
-    if (snap.empty) {
-      return NextResponse.json({ ok: true, dispatched: 0 });
-    }
+  let dispatched = 0;
+  let anySignal = false;
 
-    let dispatched = 0;
-    let anySignal = false;
+  for (const jobDoc of snap.docs) {
+    const jobRef = jobDoc.ref;
 
-    for (const jobDoc of snap.docs) {
-      const jobRef = jobDoc.ref;
+    // 트랜잭션으로 중복 실행 방지
+    const claimed = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(jobRef);
+      if (!fresh.exists || fresh.data()?.scheduleStatus !== "pending") return false;
+      tx.update(jobRef, { scheduleStatus: "processing" });
+      return true;
+    });
 
-      // 트랜잭션으로 pending 상태만 클레임 (중복 실행 방지)
-      const claimed = await db.runTransaction(async (tx) => {
-        const fresh = await tx.get(jobRef);
-        if (!fresh.exists || fresh.data()?.status !== "pending") return false;
-        tx.update(jobRef, { status: "processing" });
-        return true;
-      });
+    if (!claimed) continue;
 
-      if (!claimed) continue;
+    const job = jobDoc.data();
 
-      const job = jobDoc.data();
+    try {
+      const sendTime = now;
+      const expiresAfterMs =
+        typeof job.expiresAfterMs === "number" && isFinite(job.expiresAfterMs)
+          ? job.expiresAfterMs
+          : 7 * 24 * 60 * 60 * 1000;
+      const expiresAt = new Date(sendTime.getTime() + expiresAfterMs);
 
-      try {
-        const sendTime = now;
-        const expiresAfterMs =
-          typeof job.expiresAfterMs === "number" && isFinite(job.expiresAfterMs)
-            ? job.expiresAfterMs
-            : 7 * 24 * 60 * 60 * 1000;
-        const expiresAt = new Date(sendTime.getTime() + expiresAfterMs);
+      const title = String(job.title ?? "");
+      const content = String(job.content ?? "");
+      const sender = String(job.sender ?? "운영팀");
+      const rewards = (Array.isArray(job.rewards) ? job.rewards : []) as MailRewardStored[];
+      const localeContents = Array.isArray(job.localeContents) ? job.localeContents : [];
 
-        const title = String(job.title ?? "");
-        const content = String(job.content ?? "");
-        const sender = String(job.sender ?? "운영팀");
-        const rewards = (Array.isArray(job.rewards) ? job.rewards : []) as MailRewardStored[];
-        const localeContents = Array.isArray(job.localeContents) ? job.localeContents : [];
-        const targetAudience = job.targetAudience === "specific" ? "specific" : "all";
-
-        if (targetAudience === "all") {
+      if (isGlobal) {
+        // scheduled: isActive true로 전환 / repeat: 새 gm_* 생성
+        if (job.scheduleType === "scheduled") {
+          await jobRef.update({
+            isActive: true,
+            expiresAt: Timestamp.fromDate(expiresAt),
+            scheduleStatus: "done",
+            lastRunAt: Timestamp.fromDate(sendTime),
+            runCount: FieldValue.increment(1),
+          });
+        } else {
+          // repeat — 새 전체 우편 생성
           const mailId = makeGlobalMailId();
           const globalDoc: Record<string, unknown> = {
             title,
@@ -129,15 +126,45 @@ export async function GET(req: Request) {
           };
           if (localeContents.length > 0) globalDoc.localeContents = localeContents;
           await db.collection(COLLECTION_GLOBAL_MAILS).doc(mailId).set(globalDoc);
-        } else {
-          const rawMap = (job.recipientUids ?? {}) as Record<string, string>;
-          const uids = Object.keys(rawMap);
 
-          if (uids.length > 0) {
+          const nextRun = computeNextRunAt(job.repeatDays as RepeatDay[], job.repeatTime as string);
+          await jobRef.update({
+            scheduleStatus: "pending",
+            lastRunAt: Timestamp.fromDate(sendTime),
+            nextRunAt: Timestamp.fromDate(nextRun),
+            runCount: FieldValue.increment(1),
+          });
+        }
+      } else {
+        // personal — recipientListPath에서 수신자 읽어서 발송
+        const recipientListPath = typeof job.recipientListPath === "string" ? job.recipientListPath : "";
+        const recipients = recipientListPath ? await downloadRecipientList(recipientListPath) : [];
+        const uids = recipients.map((r) => r.uid);
+
+        if (uids.length > 0) {
+          if (job.scheduleType === "scheduled") {
+            // scheduled: isActive true + personal_list 배치 쓰기
+            await jobRef.update({
+              isActive: true,
+              expiresAt: Timestamp.fromDate(expiresAt),
+              scheduleStatus: "done",
+              lastRunAt: Timestamp.fromDate(sendTime),
+              runCount: FieldValue.increment(1),
+            });
+            const listEntry: PersonalListEntry = {
+              mailId: jobDoc.id,
+              title,
+              content,
+              rewards,
+              expiresAt: Timestamp.fromDate(expiresAt),
+              sender,
+              ...(localeContents.length > 0 ? { localeContents } : {}),
+            };
+            await writePersonalListBatch(db, uids, listEntry);
+          } else {
+            // repeat — 새 pm_* 생성
             const mailId = makePersonalMailId();
-            const recipients = uids.map((uid) => ({ uid, displayName: rawMap[uid] ?? "" }));
-            const recipientListPath = await uploadRecipientList(mailId, recipients);
-
+            const newRecipientListPath = await uploadRecipientList(mailId, recipients);
             const dispatchDoc: Record<string, unknown> = {
               title,
               content,
@@ -146,7 +173,7 @@ export async function GET(req: Request) {
               createdAt: Timestamp.fromDate(sendTime),
               expiresAt: Timestamp.fromDate(expiresAt),
               rewards,
-              recipientListPath,
+              recipientListPath: newRecipientListPath,
               recipientCount: uids.length,
             };
             if (localeContents.length > 0) dispatchDoc.localeContents = localeContents;
@@ -162,36 +189,49 @@ export async function GET(req: Request) {
               ...(localeContents.length > 0 ? { localeContents } : {}),
             };
             await writePersonalListBatch(db, uids, listEntry);
+
+            const nextRun = computeNextRunAt(job.repeatDays as RepeatDay[], job.repeatTime as string);
+            await jobRef.update({
+              scheduleStatus: "pending",
+              lastRunAt: Timestamp.fromDate(sendTime),
+              nextRunAt: Timestamp.fromDate(nextRun),
+              runCount: FieldValue.increment(1),
+            });
           }
         }
-
-        // 작업 상태 업데이트
-        if (job.type === "scheduled") {
-          await jobRef.update({
-            status: "done",
-            lastRunAt: Timestamp.fromDate(sendTime),
-            runCount: FieldValue.increment(1),
-          });
-        } else if (job.type === "repeat") {
-          const nextRun = computeNextRunAt(
-            job.repeatDays as RepeatDay[],
-            job.repeatTime as string
-          );
-          await jobRef.update({
-            status: "pending",
-            lastRunAt: Timestamp.fromDate(sendTime),
-            nextRunAt: Timestamp.fromDate(nextRun),
-            runCount: FieldValue.increment(1),
-          });
-        }
-
-        dispatched++;
-        anySignal = true;
-      } catch (jobErr) {
-        console.error(`[postbox-dispatch] job ${jobDoc.id} failed:`, jobErr);
-        await jobRef.update({ status: "failed" });
       }
+
+      dispatched++;
+      anySignal = true;
+    } catch (jobErr) {
+      console.error(`[postbox-dispatch] job ${jobDoc.id} failed:`, jobErr);
+      await jobRef.update({ scheduleStatus: "failed" });
     }
+  }
+
+  return { dispatched, anySignal };
+}
+
+export async function GET(req: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = req.headers.get("authorization");
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  try {
+    const db = getFirestoreDb();
+    const now = new Date();
+
+    const [globalResult, personalResult] = await Promise.all([
+      dispatchJobs(db, COLLECTION_GLOBAL_MAILS, now),
+      dispatchJobs(db, COLLECTION_PERSONAL_MAIL_DISPATCHES, now),
+    ]);
+
+    const dispatched = globalResult.dispatched + personalResult.dispatched;
+    const anySignal = globalResult.anySignal || personalResult.anySignal;
 
     if (anySignal) {
       await bumpPostboxSignalServer(db);

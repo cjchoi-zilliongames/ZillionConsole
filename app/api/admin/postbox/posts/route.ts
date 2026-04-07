@@ -680,8 +680,8 @@ async function removeGlobalMailFromPersonalData(
 }
 
 function mailStorageFromPostId(postId: string): MailStorageKind | null {
-  if (postId.startsWith("gm_")) return "global_mails";
-  if (postId.startsWith("pm_")) return "personal_mail_dispatches";
+  if (postId.startsWith("gm_") || postId.startsWith("gsj_")) return "global_mails";
+  if (postId.startsWith("pm_") || postId.startsWith("psj_")) return "personal_mail_dispatches";
   return null;
 }
 

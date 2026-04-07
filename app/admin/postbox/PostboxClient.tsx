@@ -37,10 +37,11 @@ const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type PostboxTab = "admin" | "repeat" | "user" | "leaderboard";
+type PostboxTab = "admin" | "scheduled" | "repeat" | "user" | "leaderboard";
 
 const TAB_POST_TYPE: Record<PostboxTab, PostType> = {
   admin: "Admin",
+  scheduled: "Admin",
   repeat: "Repeat",
   user: "User",
   leaderboard: "Leaderboard",
@@ -65,6 +66,7 @@ function formatTarget(post: PostDoc): string {
 
 const TAB_LABELS: { id: PostboxTab; label: string }[] = [
   { id: "admin", label: "관리자 우편" },
+  { id: "scheduled", label: "예약 우편" },
   { id: "repeat", label: "반복 우편" },
   { id: "user", label: "유저 우편" },
   { id: "leaderboard", label: "리더보드 보상" },
@@ -168,7 +170,7 @@ export function PostboxClient() {
   }, []);
 
   useEffect(() => {
-    if (!bootstrapped || activeTab !== "repeat") return;
+    if (!bootstrapped || (activeTab !== "repeat" && activeTab !== "scheduled")) return;
     void fetchScheduleJobs();
   }, [bootstrapped, activeTab, fetchScheduleJobs]);
 
@@ -382,32 +384,26 @@ export function PostboxClient() {
   }
 
   function toggleAllSchedule() {
-    if (scheduleJobs.length === 0) return;
-    if (scheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId))) {
+    const visible = scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat"));
+    if (visible.length === 0) return;
+    if (visible.every((job) => selectedScheduleJobs.has(job.jobId))) {
       setSelectedScheduleJobs(new Set());
       return;
     }
-    setSelectedScheduleJobs(new Set(scheduleJobs.map((job) => job.jobId)));
+    setSelectedScheduleJobs(new Set(visible.map((job) => job.jobId)));
   }
 
-  async function handleCancelSelectedJobs() {
+  async function handleDeleteSelectedScheduleJobs() {
     if (selectedScheduleJobs.size === 0) return;
-    if (!confirm(`선택한 반복/예약 우편 ${selectedScheduleJobs.size}개를 취소하시겠습니까?`)) return;
+    if (!confirm(`선택한 우편 ${selectedScheduleJobs.size}개를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
     try {
-      const targets = scheduleJobs.filter((job) => selectedScheduleJobs.has(job.jobId));
-      await Promise.all(
-        targets
-          .filter((job) => !["cancelled", "done"].includes(job.status))
-          .map(async (job) => {
-            const res = await authFetch("/api/admin/postbox/schedule", {
-              method: "DELETE",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ jobId: job.jobId }),
-            });
-            const data = await res.json() as { ok: boolean; error?: string };
-            if (!data.ok) throw new Error(data.error ?? "취소 실패");
-          })
-      );
+      const res = await authFetch("/api/admin/postbox/posts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postIds: [...selectedScheduleJobs] }),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error ?? "삭제 실패");
       setSelectedScheduleJobs(new Set());
       await fetchScheduleJobs();
     } catch (e) {
@@ -415,10 +411,33 @@ export function PostboxClient() {
     }
   }
 
+  function scheduleJobToPostDoc(job: MailScheduleJob): PostDoc {
+    const sendAt = job.nextRunAt ? new Date(job.nextRunAt) : new Date();
+    const expiresAt = new Date(sendAt.getTime() + job.expiresAfterMs);
+    return {
+      postId: job.jobId,
+      postType: "Admin",
+      title: job.title,
+      content: job.content,
+      sender: job.sender,
+      isActive: false,
+      createdAt: job.createdAt,
+      expiresAt: expiresAt.toISOString(),
+      rewards: job.rewards,
+      targetAudience: job.targetAudience,
+      recipientUids: job.recipientUids ?? {},
+      recipientCount: job.recipientUids ? Object.keys(job.recipientUids).length : 0,
+      recipientListPath: "",
+      mailStorage: job.mailStorage,
+      localeContents: job.localeContents,
+    };
+  }
+
   const allPageSelected = pageItems.length > 0 && pageItems.every((item) => selected.has(item.postId));
   const somePageSelected = pageItems.some((item) => selected.has(item.postId));
-  const allScheduleSelected = scheduleJobs.length > 0 && scheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId));
-  const someScheduleSelected = scheduleJobs.some((job) => selectedScheduleJobs.has(job.jobId));
+  const visibleScheduleJobs = scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat"));
+  const allScheduleSelected = visibleScheduleJobs.length > 0 && visibleScheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId));
+  const someScheduleSelected = visibleScheduleJobs.some((job) => selectedScheduleJobs.has(job.jobId));
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -443,7 +462,7 @@ export function PostboxClient() {
           >
             + 우편 등록
           </button>
-          {activeTab !== "repeat" && (
+          {activeTab !== "repeat" && activeTab !== "scheduled" && (
             <button
               type="button"
               onClick={() => { void handleDelete(); }}
@@ -459,10 +478,10 @@ export function PostboxClient() {
               삭제{selected.size > 0 ? ` (${selected.size})` : ""}
             </button>
           )}
-          {activeTab === "repeat" && (
+          {(activeTab === "repeat" || activeTab === "scheduled") && (
             <button
               type="button"
-              onClick={() => { void handleCancelSelectedJobs(); }}
+              onClick={() => { void handleDeleteSelectedScheduleJobs(); }}
               disabled={selectedScheduleJobs.size === 0}
               style={{
                 padding: "8px 18px", borderRadius: 8, border: "1px solid #e2e8f0",
@@ -472,11 +491,11 @@ export function PostboxClient() {
                 cursor: selectedScheduleJobs.size === 0 ? "not-allowed" : "pointer",
               }}
             >
-              취소{selectedScheduleJobs.size > 0 ? ` (${selectedScheduleJobs.size})` : ""}
+              삭제{selectedScheduleJobs.size > 0 ? ` (${selectedScheduleJobs.size})` : ""}
             </button>
           )}
           {/* Search */}
-          {activeTab !== "repeat" && (
+          {activeTab !== "repeat" && activeTab !== "scheduled" && (
             <div style={{ position: "relative" }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
                 style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
@@ -498,8 +517,8 @@ export function PostboxClient() {
           )}
           <button
             type="button"
-            onClick={() => { activeTab === "repeat" ? void fetchScheduleJobs() : void fetchPosts(); }}
-            disabled={activeTab === "repeat" ? scheduleLoading : loading}
+            onClick={() => { (activeTab === "repeat" || activeTab === "scheduled") ? void fetchScheduleJobs() : void fetchPosts(); }}
+            disabled={(activeTab === "repeat" || activeTab === "scheduled") ? scheduleLoading : loading}
             title="새로고침"
             style={{
               width: 34, height: 34, borderRadius: 8, border: "1px solid #e2e8f0",
@@ -554,7 +573,7 @@ export function PostboxClient() {
           </div>
 
           {/* Error */}
-          {activeTab === "repeat" ? (
+          {activeTab === "repeat" || activeTab === "scheduled" ? (
             !scheduleLoading && scheduleError && (
               <div style={{ padding: "40px 0", textAlign: "center", color: "#ef4444", fontSize: 14 }}>
                 {scheduleError}
@@ -568,8 +587,8 @@ export function PostboxClient() {
             )
           )}
 
-          {/* Schedule Jobs Table (반복/예약 탭) */}
-          {activeTab === "repeat" && !scheduleLoading && !scheduleError && (
+          {/* Schedule Jobs Table (예약/반복 탭) */}
+          {(activeTab === "repeat" || activeTab === "scheduled") && !scheduleLoading && !scheduleError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table style={{ width: "100%", minWidth: postTableMinW, tableLayout: "fixed", borderCollapse: "collapse", fontSize: 13 }}>
                 <colgroup>
@@ -667,7 +686,7 @@ export function PostboxClient() {
                         textAlign: "center",
                       }}
                     >
-                      반복 조건
+                      {activeTab === "scheduled" ? "예약 시각" : "반복 조건"}
                     </th>
                     <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>발송일</th>
                     <th style={{ ...thStyle, padding: "10px 14px", textAlign: "center", borderBottom: "1px solid #e5e7eb" }}>만료일</th>
@@ -675,14 +694,14 @@ export function PostboxClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {scheduleJobs.length === 0 ? (
+                  {scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat")).length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
-                        등록된 예약/반복 우편이 없습니다.
+                        {activeTab === "scheduled" ? "등록된 예약 우편이 없습니다." : "등록된 반복 우편이 없습니다."}
                       </td>
                     </tr>
                   ) : (
-                    scheduleJobs.map((job, idx) => {
+                    scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat")).map((job, idx) => {
                       const isCancelled = job.status === "cancelled";
                       const statusColor = isCancelled ? "#94a3b8" : job.status === "done" ? "#059669" : job.status === "failed" ? "#ef4444" : job.status === "processing" ? "#3b82f6" : "#f59e0b";
                       const statusLabel = { pending: "대기", processing: "처리중", done: "완료", cancelled: "취소됨", failed: "실패" }[job.status] ?? job.status;
@@ -695,7 +714,11 @@ export function PostboxClient() {
                         : "1회 예약";
                       const isSelected = selectedScheduleJobs.has(job.jobId);
                       return (
-                        <tr key={job.jobId} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <tr
+                          key={job.jobId}
+                          onClick={() => setReceiptPost(scheduleJobToPostDoc(job))}
+                          style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#fff" : "#fafafa", cursor: "pointer" }}
+                        >
                           <td
                             style={{
                               ...tdStyle,
@@ -796,7 +819,7 @@ export function PostboxClient() {
           )}
 
           {/* Admin Table */}
-          {activeTab !== "repeat" && !loading && !fetchError && (
+          {activeTab !== "repeat" && activeTab !== "scheduled" && !loading && !fetchError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table
                 style={{
@@ -1133,7 +1156,7 @@ export function PostboxClient() {
           )}
 
           {/* Pagination (관리자 탭만) */}
-          {activeTab !== "repeat" && !loading && !fetchError && (
+          {activeTab !== "repeat" && activeTab !== "scheduled" && !loading && !fetchError && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #f1f5f9", gap: 12 }}>
               <span style={{ fontSize: 13, color: "#94a3b8" }}>
                 {activeTab === "admin" && postsHasMore
