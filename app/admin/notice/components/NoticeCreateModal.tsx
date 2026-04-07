@@ -456,7 +456,18 @@ export function NoticeCreateModal({
         )}
 
         {!bootstrapped ? (
-          <div style={{ padding: 48, textAlign: "center", color: "#94a3b8", fontSize: 14 }}>인증 확인 중…</div>
+          <div
+            style={{
+              padding: 48,
+              textAlign: "center",
+              color: "#94a3b8",
+              fontSize: 14,
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
+          >
+            인증 확인 중…
+          </div>
         ) : (
           <>
             <div

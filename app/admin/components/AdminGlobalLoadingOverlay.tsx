@@ -65,6 +65,8 @@ export function AdminGlobalLoadingOverlay({ message }: { message: string | null 
           opacity: visible ? 1 : 0,
           transition: `opacity ${FADE_MS}ms ease`,
           pointerEvents: visible ? "auto" : "none",
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
       >
         <svg
