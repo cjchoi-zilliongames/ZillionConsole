@@ -1,10 +1,26 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 
-/** localStorage 기반 폴더 표시 상태 (이름, 아이콘, 선택, 라이브). */
+export const SPEC_SELECTED_FOLDER_SESSION_KEY = "spec_selected_folder_v1";
+
+function readPersistedSelectedFolder(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return sessionStorage.getItem(SPEC_SELECTED_FOLDER_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** localStorage 기반 폴더 표시 상태 (이름, 아이콘, 선택, 라이브). 선택 폴더는 탭 이동 후에도 표 유지용으로 sessionStorage 복원. */
 export function useFolderState() {
+  /** SSR/첫 페인트는 서버와 동일하게 null — 복원은 클라이언트에서만 (hydration 불일치 방지) */
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const p = readPersistedSelectedFolder();
+    if (p) setSelectedFolder(p);
+  }, []);
 
   const [liveFolder, setLiveFolder] = useState<string | null>(() => {
     try { return localStorage.getItem("spec_live_folder") ?? "0/"; } catch { return "0/"; }

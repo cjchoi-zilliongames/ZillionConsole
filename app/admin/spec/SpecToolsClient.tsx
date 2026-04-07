@@ -6,7 +6,7 @@ import { ChartMemosConflictError } from "@/lib/spec/chart-memos";
 import { useStorageService } from "./hooks/useStorageService";
 import { useInventory } from "./hooks/useInventory";
 import type { InventoryFile } from "./hooks/useInventory";
-import { useFolderState } from "./hooks/useFolderState";
+import { SPEC_SELECTED_FOLDER_SESSION_KEY, useFolderState } from "./hooks/useFolderState";
 import { useFileSelection } from "./hooks/useFileSelection";
 import { useConflictResolver } from "./hooks/useConflictResolver";
 import { useFolderOperations } from "./hooks/useFolderOperations";
@@ -35,7 +35,9 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { BulkActionToast, type BulkToastTone } from "./components/BulkActionToast";
 import { AdminGlobalLoadingOverlay } from "../components/AdminGlobalLoadingOverlay";
 
-/** 우편·공지 목록과 동일 (`AdminGlobalLoadingOverlay` 캡션) */
+/** 앱 버전 폴더 작업 등 — 동일 오버레이, 문구만 구분 */
+const ADMIN_FOLDER_BUSY_MESSAGE = "처리 중…";
+/** 우편·공지·`AdminGlobalLoadingOverlay`와 동일 */
 const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 function ConsoleDockedBar({ style, children }: { style?: CSSProperties; children: ReactNode }) {
@@ -235,9 +237,24 @@ export function SpecToolsClient() {
 
   // ── Sync effects ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const f = inventory?.folders;
-    if (!f?.length) { setSelectedFolder(null); return; }
-    setSelectedFolder((prev) => prev && f.includes(prev) ? prev : f[0]!);
+    if (selectedFolder) {
+      try {
+        sessionStorage.setItem(SPEC_SELECTED_FOLDER_SESSION_KEY, selectedFolder);
+      } catch { /* ignore */ }
+    }
+  }, [selectedFolder]);
+
+  useEffect(() => {
+    if (inventory === null) return;
+    const f = inventory.folders;
+    if (!f.length) {
+      try {
+        sessionStorage.removeItem(SPEC_SELECTED_FOLDER_SESSION_KEY);
+      } catch { /* ignore */ }
+      setSelectedFolder(null);
+      return;
+    }
+    setSelectedFolder((prev) => (prev && f.includes(prev) ? prev : f[0]!));
   }, [inventory, setSelectedFolder]);
 
   useEffect(() => {
@@ -422,7 +439,13 @@ export function SpecToolsClient() {
   return (
     <>
       <AdminGlobalLoadingOverlay
-        message={loadingInv && !folderOps.mergeBusy ? ADMIN_DATA_LOADING_MESSAGE : null}
+        message={
+          folderOps.folderBusy && !folderOps.deleteFolderTarget
+            ? ADMIN_FOLDER_BUSY_MESSAGE
+            : loadingInv
+              ? ADMIN_DATA_LOADING_MESSAGE
+              : null
+        }
       />
       <style>{`@keyframes _spin{to{transform:rotate(360deg)}}`}</style>
 
@@ -448,9 +471,9 @@ export function SpecToolsClient() {
             <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #e5e7eb", padding: "0 16px 0 20px", gap: 8, flexShrink: 0, minHeight: ADMIN_LIST_PANEL_TOOLBAR_MIN_HEIGHT_PX }}>
               <div aria-hidden style={adminListPanelToolbarZeroWidthRhythmSpacerStyle} />
               <span style={{ fontWeight: 500, fontSize: 14, color: "#64748b", whiteSpace: "nowrap", flexShrink: 0 }}>
-                Storage 브라우저
+                현재 앱버전
               </span>
-              <span style={{ fontWeight: 700, fontSize: 14, color: "#0f172a", whiteSpace: "nowrap", flexShrink: 0 }}>
+              <span style={{ fontWeight: 700, fontSize: 16, color: "#0f172a", whiteSpace: "nowrap", flexShrink: 0, letterSpacing: "-0.02em" }}>
                 {selectedFolder ? (folderNames[selectedFolder] ?? "(이름 없음)") : "—"}
               </span>
               {invError && <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600, marginLeft: 8, flexShrink: 0 }}>{invError}</span>}
@@ -543,39 +566,38 @@ export function SpecToolsClient() {
               {/* ── Main content ── */}
               <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: "#fff" }}>
                 {/* File list */}
-                <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", padding: "0 18px 16px", display: "flex", flexDirection: "column" }}>
-                  {!selectedFolder ? (
-                    <div style={{ flex: 1, minHeight: 0 }} aria-hidden />
-                  ) : (
-                    <div
-                      style={{
-                        flex: 1,
-                        minHeight: 0,
-                        minWidth: 0,
-                        overflow: "auto",
-                        overscrollBehavior: "contain",
-                      }}
-                    >
-                      <SpecFilesTable
-                        fileGroupsInFolder={filteredFileGroups}
-                        selectedPaths={selectedPaths}
-                        activePathByDisplay={activePathByDisplay}
-                        setActivePathByDisplay={setActivePathByDisplay}
-                        allVisibleSelected={allVisibleSelected}
-                        toggleSelectAllVisible={toggleSelectAllVisible}
-                        toggleGroup={toggleGroup}
-                        chartMemos={chartMemos}
-                        editingMemoKey={editingMemoKey}
-                        editingMemoValue={editingMemoValue}
-                        setEditingMemoKey={setEditingMemoKey}
-                        setEditingMemoValue={setEditingMemoValue}
-                        onSaveMemo={saveChartMemo}
-                        folderNames={folderNames}
-                        onCsvPreview={openCsvPreview}
-                        onRowContextMenu={(file, x, y) => { setVersionPicker(null); setFileContextMenu({ x, y, file }); }}
-                      />
-                    </div>
-                  )}
+                <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", padding: "0 0 16px", display: "flex", flexDirection: "column" }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      minWidth: 0,
+                      overflow: "auto",
+                      overscrollBehavior: "contain",
+                    }}
+                  >
+                    <SpecFilesTable
+                      folderSelected={!!selectedFolder}
+                      fileGroupsInFolder={filteredFileGroups}
+                      inventoryLoading={loadingInv}
+                      hasSearchFilter={searchQuery.trim().length > 0}
+                      selectedPaths={selectedPaths}
+                      activePathByDisplay={activePathByDisplay}
+                      setActivePathByDisplay={setActivePathByDisplay}
+                      allVisibleSelected={allVisibleSelected}
+                      toggleSelectAllVisible={toggleSelectAllVisible}
+                      toggleGroup={toggleGroup}
+                      chartMemos={chartMemos}
+                      editingMemoKey={editingMemoKey}
+                      editingMemoValue={editingMemoValue}
+                      setEditingMemoKey={setEditingMemoKey}
+                      setEditingMemoValue={setEditingMemoValue}
+                      onSaveMemo={saveChartMemo}
+                      folderNames={folderNames}
+                      onCsvPreview={openCsvPreview}
+                      onRowContextMenu={(file, x, y) => { setVersionPicker(null); setFileContextMenu({ x, y, file }); }}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -743,15 +765,6 @@ export function SpecToolsClient() {
             <div style={{ height: "100%", width: `${mergeProgress}%`, background: "linear-gradient(90deg, #1d4ed8 0%, #3b82f6 100%)", borderRadius: 999, transition: "width 0.12s linear" }} />
           </div>
         </ConsoleDockedBar>
-      )}
-
-      {/* Folder busy overlay */}
-      {folderOps.folderBusy && !folderOps.deleteFolderTarget && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 110 }}>
-          <div style={{ background: "#fff", borderRadius: 14, padding: "20px 28px", boxShadow: "0 12px 40px rgba(0,0,0,0.18)", fontSize: 15, fontWeight: 600, color: "#111827" }}>
-            처리 중…
-          </div>
-        </div>
       )}
 
       {/* File context menu */}

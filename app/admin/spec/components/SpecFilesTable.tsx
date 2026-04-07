@@ -1,12 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ChartMemos } from "@/lib/spec/chart-memos";
 import type { InventoryFile } from "../hooks/useInventory";
 
 type FileGroup = { displayName: string; versions: InventoryFile[] };
 
 const COL_MIN = { select: 40, name: 100, version: 88 };
+
+const DEFAULT_COL_WIDTHS = { select: 52, name: 280, version: 100 };
+
+function readColWidthsFromStorage(): { select: number; name: number; version: number } {
+  try {
+    const raw = localStorage.getItem("spec_csv_col_widths");
+    const j = raw ? (JSON.parse(raw) as { s?: unknown; n?: unknown; v?: unknown }) : {};
+    return {
+      select: typeof j.s === "number" && j.s >= COL_MIN.select ? j.s : DEFAULT_COL_WIDTHS.select,
+      name: typeof j.n === "number" && j.n >= COL_MIN.name ? j.n : DEFAULT_COL_WIDTHS.name,
+      version: typeof j.v === "number" && j.v >= COL_MIN.version ? j.v : DEFAULT_COL_WIDTHS.version,
+    };
+  } catch {
+    return { ...DEFAULT_COL_WIDTHS };
+  }
+}
 
 /** 차트 목록 선택 열 — 크기는 `globals.css` `.spec-files-table-checkbox` */
 const SPEC_FILES_TABLE_CHECKBOX_CLASSNAME = "spec-files-table-checkbox";
@@ -28,6 +44,12 @@ const CHART_VER_CONTROL_OUTER: CSSProperties = {
 
 type SpecFilesTableProps = {
   fileGroupsInFolder: FileGroup[];
+  /** 왼쪽 앱 버전 선택됨. false면 열 머리는 유지하고 안내 행만 */
+  folderSelected?: boolean;
+  /** 인벤토리 초기/전체 로드 중 — 열 구조 유지한 채 본문에 로딩 행 */
+  inventoryLoading?: boolean;
+  /** 검색으로 걸러진 빈 목록일 때 안내 문구 분기 */
+  hasSearchFilter?: boolean;
   selectedPaths: Set<string>;
   activePathByDisplay: Record<string, string>;
   setActivePathByDisplay: React.Dispatch<React.SetStateAction<Record<string, string>>>;
@@ -47,7 +69,11 @@ type SpecFilesTableProps = {
 };
 
 export function SpecFilesTable({
-  fileGroupsInFolder, selectedPaths, activePathByDisplay, setActivePathByDisplay,
+  fileGroupsInFolder,
+  folderSelected = true,
+  inventoryLoading = false,
+  hasSearchFilter = false,
+  selectedPaths, activePathByDisplay, setActivePathByDisplay,
   allVisibleSelected, toggleSelectAllVisible, toggleGroup,
   chartMemos,
   editingMemoKey, editingMemoValue, setEditingMemoKey, setEditingMemoValue,
@@ -71,19 +97,11 @@ export function SpecFilesTable({
     if (sortDir === "asc") return fileGroupsInFolder;
     return [...fileGroupsInFolder].sort((a, b) => b.displayName.localeCompare(a.displayName));
   }, [fileGroupsInFolder, sortDir]);
-  const [colWidths, setColWidths] = useState(() => {
-    try {
-      const raw = localStorage.getItem("spec_csv_col_widths");
-      const j = raw ? (JSON.parse(raw) as { s?: unknown; n?: unknown; v?: unknown }) : {};
-      return {
-        select: typeof j.s === "number" && j.s >= COL_MIN.select ? j.s : 52,
-        name: typeof j.n === "number" && j.n >= COL_MIN.name ? j.n : 280,
-        version: typeof j.v === "number" && j.v >= COL_MIN.version ? j.v : 100,
-      };
-    } catch {
-      return { select: 52, name: 280, version: 100 };
-    }
-  });
+  /** SSR·hydration 첫 페인트는 항상 기본값 — localStorage는 마운트 후에만 (col style 불일치 방지) */
+  const [colWidths, setColWidths] = useState(() => ({ ...DEFAULT_COL_WIDTHS }));
+  useLayoutEffect(() => {
+    setColWidths(readColWidthsFromStorage());
+  }, []);
   const colWidthsRef = useRef(colWidths);
   colWidthsRef.current = colWidths;
   const resizeRef = useRef<{
@@ -211,6 +229,16 @@ export function SpecFilesTable({
     ...extra,
   });
 
+  const listEmptyNoLoading =
+    folderSelected && !inventoryLoading && sortedGroups.length === 0;
+  const emptyPanelMessage = !folderSelected
+    ? "왼쪽에서 앱 버전을 선택하세요."
+    : listEmptyNoLoading
+      ? hasSearchFilter
+        ? "검색 결과가 없습니다."
+        : "이 앱 버전에 등록된 차트가 없습니다."
+      : null;
+
   return (
     <>
       <style>{`
@@ -231,10 +259,35 @@ export function SpecFilesTable({
           background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
         }
       `}</style>
-      <div ref={wrapRef} style={{ display: "flex", flexDirection: "column", minWidth: 0, background: "#fff", boxSizing: "border-box" }}>
+      <div
+        ref={wrapRef}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          minHeight: "100%",
+          background: "#fff",
+          boxSizing: "border-box",
+        }}
+      >
       <table
-        aria-label={fileGroupsInFolder.length === 0 ? "스펙 CSV 없음 — 빈 표" : "스펙 CSV 목록"}
-        style={{ width: "100%", tableLayout: "fixed", borderCollapse: "collapse", fontSize: 13, borderSpacing: 0 }}
+        aria-label={
+          !folderSelected
+            ? "스펙 CSV 목록 — 앱 버전 선택"
+            : inventoryLoading && fileGroupsInFolder.length === 0
+              ? "스펙 CSV 목록 — 불러오는 중"
+              : fileGroupsInFolder.length === 0
+                ? "스펙 CSV 없음 — 빈 표"
+                : "스펙 CSV 목록"
+        }
+        style={{
+          width: "100%",
+          tableLayout: "fixed",
+          borderCollapse: "collapse",
+          fontSize: 13,
+          borderSpacing: 0,
+          flexShrink: 0,
+        }}
       >
         <colgroup>
           <col style={{ width: `${displayedColWidths.select}px` }} />
@@ -262,6 +315,7 @@ export function SpecFilesTable({
               <input
                 type="checkbox"
                 checked={allVisibleSelected}
+                disabled={!folderSelected || inventoryLoading || sortedGroups.length === 0}
                 onChange={toggleSelectAllVisible}
                 title="전체 선택"
                 aria-label="전체 선택"
@@ -343,7 +397,7 @@ export function SpecFilesTable({
           </tr>
         </thead>
         <tbody>
-          {sortedGroups.map((g, ri) => {
+          {folderSelected ? sortedGroups.map((g, ri) => {
             const activePath = activePathByDisplay[g.displayName] ?? g.versions[g.versions.length - 1]!.fullPath;
             const activeFile = g.versions.find((v) => v.fullPath === activePath) ?? g.versions[g.versions.length - 1]!;
             const memoKey = activeFile.fullPath;
@@ -523,9 +577,28 @@ export function SpecFilesTable({
                 </td>
               </tr>
             );
-          })}
+          }) : null}
         </tbody>
       </table>
+      {emptyPanelMessage != null ? (
+        <div
+          role="status"
+          style={{
+            flex: 1,
+            minHeight: 160,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px 20px",
+            color: "#94a3b8",
+            fontSize: 14,
+            textAlign: "center",
+            boxSizing: "border-box",
+          }}
+        >
+          {emptyPanelMessage}
+        </div>
+      ) : null}
     </div>
     </>
   );
