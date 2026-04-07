@@ -1592,10 +1592,10 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                         onChange={(e) => setRepeatTime(e.target.value)}
                         aria-label="반복 발송 시각 (UTC)"
                         style={{
-                          width: "5.5rem",
-                          minHeight: 33,
+                          width: "7.7rem",
+                          minHeight: 33.5,
                           padding: "6px 8px",
-                          borderRadius: 8,
+                          borderRadius: 10,
                           border: "1px solid #cbd5e1",
                           fontSize: 13,
                           fontFamily: "inherit",
