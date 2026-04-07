@@ -797,7 +797,7 @@ function NoticeDetailModal({
             style={{
               margin: 0,
               fontWeight: 800,
-              fontSize: 20,
+              fontSize: 18,
               color: "#0f172a",
               lineHeight: 1.35,
               letterSpacing: "-0.02em",
@@ -836,7 +836,7 @@ function NoticeDetailModal({
               background: "transparent",
               cursor: "pointer",
               color: "#64748b",
-              fontSize: 26,
+              fontSize: 24,
               lineHeight: 1,
               padding: "0 4px",
             }}

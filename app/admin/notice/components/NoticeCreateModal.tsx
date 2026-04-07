@@ -370,8 +370,8 @@ export function NoticeCreateModal({
         aria-labelledby="notice-create-modal-title"
         style={{
           width: "min(860px, calc(100vw - 24px))",
-          height: "min(92vh, 1080px)",
-          maxHeight: "min(92vh, 1080px)",
+          height: "min(83vh, 970px)",
+          maxHeight: "min(83vh, 970px)",
           display: "flex",
           flexDirection: "column",
           background: "#fff",
@@ -392,7 +392,7 @@ export function NoticeCreateModal({
         >
           <h2
             id="notice-create-modal-title"
-            style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}
+            style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}
           >
             {isEdit ? "공지 수정하기" : "공지 등록"}
           </h2>
@@ -408,7 +408,7 @@ export function NoticeCreateModal({
               color: "#64748b",
               fontSize: 24,
               lineHeight: 1,
-              padding: 4,
+              padding: "0 4px",
             }}
           >
             ×

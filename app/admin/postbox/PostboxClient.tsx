@@ -1625,7 +1625,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                 background: "transparent",
                 color: "#64748b",
                 cursor: "pointer",
-                fontSize: 26,
+                fontSize: 24,
                 lineHeight: 1,
                 padding: "0 4px",
               }}

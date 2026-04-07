@@ -347,9 +347,9 @@ function UserPickerModal({
           display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "16px 20px 12px", borderBottom: "1px solid #e5e7eb", flexShrink: 0,
         }}>
-          <span style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>유저 선택</span>
+          <span style={{ fontWeight: 800, fontSize: 18, color: "#0f172a", letterSpacing: "-0.02em" }}>유저 선택</span>
           <button type="button" onClick={onClose}
-            style={{ border: "none", background: "transparent", cursor: "pointer", color: "#6b7280", fontSize: 20, lineHeight: 1, padding: 0 }}>
+            style={{ border: "none", background: "transparent", cursor: "pointer", color: "#64748b", fontSize: 24, lineHeight: 1, padding: "0 4px" }}>
             ×
           </button>
         </div>
@@ -1188,6 +1188,16 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitTooltip, setSubmitTooltip] = useState<{ x: number; y: number } | null>(null);
+
+  const hasValidLang = langRows.some((r) => r.title.trim() && r.content.trim());
+  const hasIncompleteLang = langRows.some((r) => !r.title.trim() || !r.content.trim());
+  const submitDisabledReason: string | null =
+    !hasValidLang
+      ? "최소 하나의 언어에 제목과 내용을 입력해 주세요."
+      : hasIncompleteLang
+      ? "모든 언어에 제목과 내용을 입력해 주세요."
+      : null;
 
   function addPickedUser(u: PickedUser) {
     setPickedUsers((prev) => {
@@ -1353,15 +1363,9 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       }
     }
 
+    if (submitDisabledReason) return;
+
     const validRows = langRows.filter((r) => r.title.trim() && r.content.trim());
-    if (validRows.length === 0) {
-      setError("최소 하나의 언어에 제목과 내용을 입력해 주세요.");
-      return;
-    }
-    if (langRows.some((r) => !r.title.trim() || !r.content.trim())) {
-      setError("모든 언어에 제목과 내용을 입력해 주세요.");
-      return;
-    }
 
     if (audienceMode === "specific" && pickedUsers.length === 0) {
       setError("직접 발송일 때 수신 유저를 목록에서 선택해 추가하세요.");
@@ -1487,11 +1491,11 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
             borderBottom: "1px solid #f1f5f9",
           }}
         >
-          <span style={{ fontWeight: 800, fontSize: 16, color: "#0f172a" }}>우편 등록</span>
+          <span style={{ fontWeight: 800, fontSize: 18, color: "#0f172a", letterSpacing: "-0.02em" }}>우편 등록</span>
           <button
             type="button"
             onClick={onClose}
-            style={{ border: "none", background: "transparent", cursor: "pointer", color: "#64748b", fontSize: 20, lineHeight: 1 }}
+            style={{ border: "none", background: "transparent", cursor: "pointer", color: "#64748b", fontSize: 24, lineHeight: 1, padding: "0 4px" }}
           >
             ×
           </button>
@@ -2114,16 +2118,19 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !!submitDisabledReason}
+              onMouseMove={submitDisabledReason ? (e) => setSubmitTooltip({ x: e.clientX + 12, y: e.clientY + 14 }) : undefined}
+              onMouseLeave={submitDisabledReason ? () => setSubmitTooltip(null) : undefined}
               style={{
                 padding: "9px 24px",
                 borderRadius: 8,
                 border: "none",
-                background: submitting ? "#94a3b8" : "#0f172a",
+                background: submitting || submitDisabledReason ? "#94a3b8" : "#0f172a",
                 color: "#fff",
                 fontWeight: 700,
                 fontSize: 13,
-                cursor: submitting ? "not-allowed" : "pointer",
+                cursor: submitting || submitDisabledReason ? "not-allowed" : "pointer",
+                opacity: submitDisabledReason ? 0.6 : 1,
               }}
             >
               {submitting ? "등록 중…" : dispatchType === "immediate" ? "즉시 발송" : dispatchType === "scheduled" ? "예약 등록" : "반복 등록"}
@@ -2158,6 +2165,30 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
       {rewardDetail && (
         <RewardDetailModal reward={rewardDetail} onClose={() => setRewardDetail(null)} />
+      )}
+
+      {submitTooltip && submitDisabledReason && (
+        <div
+          role="tooltip"
+          style={{
+            position: "fixed",
+            left: submitTooltip.x,
+            top: submitTooltip.y,
+            zIndex: 20000,
+            pointerEvents: "none",
+            fontSize: 12,
+            lineHeight: 1.4,
+            padding: "6px 10px",
+            borderRadius: 6,
+            background: "#1e293b",
+            color: "#f8fafc",
+            boxShadow: "0 4px 14px rgba(15,23,42,0.25)",
+            whiteSpace: "nowrap",
+            fontWeight: 500,
+          }}
+        >
+          {submitDisabledReason}
+        </div>
       )}
     </div>
   );
