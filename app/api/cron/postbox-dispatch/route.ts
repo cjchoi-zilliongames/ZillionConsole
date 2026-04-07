@@ -62,18 +62,23 @@ async function dispatchJobs(
 
   const snap = await db
     .collection(collection)
-    .where("scheduleType", "in", ["scheduled", "repeat"])
     .where("scheduleStatus", "==", "pending")
-    .where("nextRunAt", "<=", Timestamp.fromDate(now))
-    .limit(50)
+    .limit(200)
     .get();
 
-  if (snap.empty) return { dispatched: 0, anySignal: false };
+  const dueDocs = snap.docs.filter((doc) => {
+    const d = doc.data();
+    if (!d.scheduleType || !d.nextRunAt) return false;
+    const runAt = d.nextRunAt instanceof Timestamp ? d.nextRunAt.toDate() : new Date(d.nextRunAt);
+    return runAt <= now;
+  });
+
+  if (dueDocs.length === 0) return { dispatched: 0, anySignal: false };
 
   let dispatched = 0;
   let anySignal = false;
 
-  for (const jobDoc of snap.docs) {
+  for (const jobDoc of dueDocs) {
     const jobRef = jobDoc.ref;
 
     // 트랜잭션으로 중복 실행 방지

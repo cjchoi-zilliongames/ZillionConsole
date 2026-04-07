@@ -122,7 +122,7 @@ export async function GET(req: Request) {
     let nextCursor: string | null = null;
     let targetAudience: "all" | "specific" = "all";
 
-    if (postId.startsWith("gm_")) {
+    if (postId.startsWith("gm_") || postId.startsWith("gsj_")) {
       const postSnap = await db.collection(COLLECTION_GLOBAL_MAILS).doc(postId).get();
       if (!postSnap.exists) {
         return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });
@@ -207,7 +207,7 @@ export async function GET(req: Request) {
           );
         }
       }
-    } else if (postId.startsWith("pm_")) {
+    } else if (postId.startsWith("pm_") || postId.startsWith("psj_")) {
       const postSnap = await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(postId).get();
       if (!postSnap.exists) {
         return NextResponse.json({ ok: false, error: "우편을 찾을 수 없습니다." }, { status: 404 });

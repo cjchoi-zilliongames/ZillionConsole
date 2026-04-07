@@ -216,12 +216,10 @@ export async function GET(req: Request) {
     const [gSnap, pSnap] = await Promise.all([
       db.collection(COLLECTION_GLOBAL_MAILS)
         .where("scheduleType", "in", ["scheduled", "repeat"])
-        .orderBy("createdAt", "desc")
         .limit(100)
         .get(),
       db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES)
         .where("scheduleType", "in", ["scheduled", "repeat"])
-        .orderBy("createdAt", "desc")
         .limit(100)
         .get(),
     ]);
