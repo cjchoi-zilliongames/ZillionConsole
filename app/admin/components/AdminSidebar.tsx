@@ -20,7 +20,7 @@ type AdminSidebarProps = {
 
 function NavIconHome() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: "block" }}>
       <path d="M3 10.5L12 3l9 7.5V21a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-10.5z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
     </svg>
   );
@@ -52,21 +52,16 @@ function NavIconPostbox() {
   const sw = 1.7;
   return (
     <svg
-      width="24"
-      height="24"
+      width="21"
+      height="21"
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden
       style={{ display: "block" }}
     >
+      <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth={sw} />
       <path
-        d="M4 8h16v10H4V8z"
-        stroke="currentColor"
-        strokeWidth={sw}
-        strokeLinejoin="round"
-      />
-      <path
-        d="M4 8l8 5.5L20 8"
+        d="M2 4l10 8 10-8"
         stroke="currentColor"
         strokeWidth={sw}
         strokeLinecap="round"
@@ -176,7 +171,7 @@ function vSpace(n: number) {
 
 const SIDEBAR_NAV_PAD_TOP = vSpace(10);
 const SIDEBAR_NAV_PAD_BOTTOM = vSpace(20);
-const SIDEBAR_ITEM_PAD_Y = vSpace(8);
+const SIDEBAR_ITEM_PAD_Y = vSpace(10);
 const SIDEBAR_ITEM_PAD_Y_COLLAPSED = vSpace(8);
 const SIDEBAR_SEP_MARGIN_Y = vSpace(8);
 const SIDEBAR_HEADER_PAD_TOP = vSpace(12);
@@ -190,12 +185,13 @@ const SIDEBAR_NAV_ICON_BOX_PX = 26;
 
 function SidebarNavItem({ href, active, icon, label, sub, collapsed, nestIndent }: ItemProps) {
   const hasSub = Boolean(sub);
-  const padLeft = collapsed ? 0 : nestIndent ? Math.round(inset(20) * 1.2 * 1.2) : inset(12);
+  const padLeft = collapsed ? 0 : nestIndent ? Math.round(inset(32) * 1.2 * 1.2) : inset(15);
   const mx = inset(8);
   return (
     <Link
       href={href}
       title={collapsed ? (sub ? `${label} — ${sub}` : label) : undefined}
+      className={`admin-sidebar-nav-item${active ? " admin-sidebar-nav-item--active" : ""}`}
       style={{
         display: "flex",
         alignItems: hasSub ? "flex-start" : "center",
@@ -210,7 +206,7 @@ function SidebarNavItem({ href, active, icon, label, sub, collapsed, nestIndent 
         color: active ? BAR_SLATE : "#475569",
         background: active ? "rgba(15, 23, 42, 0.06)" : "transparent",
         fontWeight: active ? 700 : 500,
-        fontSize: 13,
+        fontSize: 14,
         lineHeight: 1.4,
         transition: "background 0.12s, color 0.12s",
       }}
@@ -221,10 +217,8 @@ function SidebarNavItem({ href, active, icon, label, sub, collapsed, nestIndent 
           alignItems: "center",
           justifyContent: "center",
           width: SIDEBAR_NAV_ICON_BOX_PX,
-          height: SIDEBAR_NAV_ICON_BOX_PX,
           flexShrink: 0,
           color: active ? BAR_SLATE : "#64748b",
-          marginTop: hasSub ? 2 : 0,
         }}
         aria-hidden
       >
@@ -237,8 +231,6 @@ function SidebarNavItem({ href, active, icon, label, sub, collapsed, nestIndent 
             flexDirection: "column",
             gap: hasSub ? 3 : 0,
             minWidth: 0,
-            minHeight: hasSub ? undefined : SIDEBAR_NAV_ICON_BOX_PX,
-            justifyContent: hasSub ? undefined : "center",
           }}
         >
           <span>{label}</span>
@@ -322,6 +314,9 @@ export function AdminSidebar({
         .admin-sidebar-ops-toggle[aria-expanded="true"] {
           background: #fff !important;
           color: #334155 !important;
+        }
+        .admin-sidebar-nav-item:hover:not(.admin-sidebar-nav-item--active) {
+          background: rgba(15, 23, 42, 0.04) !important;
         }
       `}</style>
       <div
@@ -450,12 +445,11 @@ export function AdminSidebar({
                           border: "none",
                           background: "#fff",
                           color: "#334155",
-                          fontSize: 13,
+                          fontSize: 14,
                           fontWeight: 400,
                           lineHeight: 1.35,
                           letterSpacing: "-0.02em",
-                          fontFamily:
-                            '"Pretendard Variable", Pretendard, system-ui, -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
+                          fontFamily: "inherit",
                           cursor: "pointer",
                           textAlign: "left",
                           outline: "none",
