@@ -1508,7 +1508,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               style={{
                 display: "grid",
                 gridTemplateColumns: "auto minmax(0, 1fr)",
-                columnGap: 24,
+                columnGap: 64,
                 rowGap: 20,
                 alignItems: "start",
               }}
@@ -1686,7 +1686,8 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               borderRadius: 10,
               overflow: "hidden",
               display: "grid",
-              gridTemplateColumns: "168px 1fr",
+              gridTemplateColumns: "176px 1fr",
+              columnGap: 20,
               height: 370,
             }}>
               {/* 언어 사이드바 */}
@@ -1997,7 +1998,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               onClick={() => setShowChartPicker(true)}
               disabled={postboxChartsLoading || postboxCharts.length === 0}
               style={{
-                display: "flex",
+                display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
                 padding: "7px 14px",
@@ -2007,15 +2008,18 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 color: postboxChartsLoading || postboxCharts.length === 0 ? "#94a3b8" : "#374151",
                 fontWeight: 600,
                 fontSize: 13,
+                lineHeight: 1.25,
                 cursor: postboxChartsLoading || postboxCharts.length === 0 ? "wait" : "pointer",
               }}
             >
-              <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
-              {postboxChartsLoading
-                ? ADMIN_DATA_LOADING_MESSAGE
-                : postboxCharts.length === 0
+              <span aria-hidden style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.25 }}>
+                +
+              </span>
+              <span style={{ lineHeight: 1.25 }}>
+                {!postboxChartsLoading && postboxCharts.length === 0
                   ? "item.csv / item{n}.csv 없음"
                   : "아이템 추가"}
+              </span>
             </button>
           </FormRow>
 
@@ -2035,21 +2039,43 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               {audienceMode === "all" ? (
                 <span style={{ fontSize: 12, color: "#94a3b8" }}>모든 유저를 대상으로 발송</span>
               ) : (
-                <span
-                  title={pickedUsers.map((u) => `${u.label} (${u.uid})`).join("\n")}
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "#0f172a",
-                    background: "#f1f5f9",
-                    padding: "5px 12px",
-                    borderRadius: 20,
-                    cursor: "default",
-                    userSelect: "none",
-                  }}
-                >
-                  👥 {pickedUsers.length}명 선택됨
-                </span>
+                <>
+                  {pickedUsers.length > 0 ? (
+                    <span
+                      title={pickedUsers.map((u) => `${u.label} (${u.uid})`).join("\n")}
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: "#0f172a",
+                        background: "#f1f5f9",
+                        padding: "5px 12px",
+                        borderRadius: 20,
+                        cursor: "default",
+                        userSelect: "none",
+                      }}
+                    >
+                      👥 {pickedUsers.length}명 선택됨
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>아직 선택된 유저가 없습니다.</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPicker(true)}
+                    style={{
+                      padding: "5px 14px",
+                      borderRadius: 8,
+                      border: "1.5px solid #0f172a",
+                      background: "#fff",
+                      color: "#0f172a",
+                      fontWeight: 600,
+                      fontSize: 12,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {pickedUsers.length > 0 ? "수정" : "+ 유저 선택"}
+                  </button>
+                </>
               )}
             </div>
           </FormRow>
@@ -2119,10 +2145,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           pickedUsers={pickedUsers}
           onAdd={addPickedUser}
           onRemove={removePickedUser}
-          onClose={() => {
-            setShowUserPicker(false);
-            if (pickedUsers.length === 0) setAudienceMode("all");
-          }}
+          onClose={() => setShowUserPicker(false)}
         />
       )}
       {showChartPicker && (
