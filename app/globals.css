@@ -61,3 +61,120 @@ input.admin-list-table-checkbox[type="checkbox"] {
   font-size: 17px !important;
   line-height: 1 !important;
 }
+
+/* 우편 등록 — 예약 시각 피커 (모달 z-index ≤150 위) */
+.post-register-datepicker-wrap {
+  width: 100%;
+  display: block;
+}
+.post-register-datepicker-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #1e293b;
+  outline: none;
+  box-sizing: border-box;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.post-register-datepicker-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+.post-register-datepicker-popper {
+  z-index: 200 !important;
+}
+.post-register-datepicker-popper .react-datepicker {
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow:
+    0 4px 6px -1px rgba(15, 23, 42, 0.06),
+    0 20px 40px -12px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+.post-register-datepicker-popper .react-datepicker__header {
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #e2e8f0;
+  padding-top: 10px;
+  padding-bottom: 8px;
+}
+.post-register-datepicker-popper .react-datepicker__current-month {
+  font-weight: 700;
+  font-size: 13px;
+  color: #0f172a;
+}
+.post-register-datepicker-popper .react-datepicker__day-name {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+.post-register-datepicker-popper .react-datepicker__day--today {
+  font-weight: 700;
+  color: #2563eb;
+}
+.post-register-datepicker-popper .react-datepicker__day:not([aria-disabled="true"]):hover,
+.post-register-datepicker-popper .react-datepicker__month-text:not([aria-disabled="true"]):hover,
+.post-register-datepicker-popper .react-datepicker__year-text:not([aria-disabled="true"]):hover {
+  background-color: #e2e8f0;
+  border-radius: 8px;
+}
+.post-register-datepicker-popper .react-datepicker__day--selected,
+.post-register-datepicker-popper .react-datepicker__day--in-range,
+.post-register-datepicker-popper .react-datepicker__month-text--selected,
+.post-register-datepicker-popper .react-datepicker__year-text--selected {
+  background: #0f172a !important;
+  color: #fff !important;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.post-register-datepicker-popper .react-datepicker__day--selected:not([aria-disabled="true"]):hover,
+.post-register-datepicker-popper .react-datepicker__month-text--selected:not([aria-disabled="true"]):hover,
+.post-register-datepicker-popper .react-datepicker__year-text--selected:not([aria-disabled="true"]):hover {
+  background: #1e293b !important;
+}
+.post-register-datepicker-popper .react-datepicker__day--keyboard-selected {
+  background: #dbeafe !important;
+  color: #1e40af !important;
+  border-radius: 8px;
+}
+.post-register-datepicker-popper .react-datepicker__navigation-icon::before {
+  border-color: #64748b;
+}
+.post-register-datepicker-popper .react-datepicker__time-container {
+  border-left-color: #e2e8f0;
+  background: #fafbfc;
+}
+.post-register-datepicker-popper .react-datepicker__header--time {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+.post-register-datepicker-popper .react-datepicker-time__header {
+  font-weight: 600;
+  color: #475569;
+  font-size: 12px;
+}
+.post-register-datepicker-popper .react-datepicker__time-list {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.post-register-datepicker-popper .react-datepicker__time-list-item:hover {
+  background: #e2e8f0 !important;
+}
+.post-register-datepicker-popper .react-datepicker__time-list-item--selected {
+  background: #0f172a !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+.post-register-datepicker-popper .react-datepicker__time-list-item--selected:hover {
+  background: #1e293b !important;
+}
+.post-register-datepicker-popper .react-datepicker__time-list-item--disabled {
+  color: #cbd5e1 !important;
+}

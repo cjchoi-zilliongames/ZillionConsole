@@ -10,6 +10,10 @@ import {
   type FormEvent,
   type MouseEvent,
 } from "react";
+import DatePicker, { registerLocale } from "react-datepicker";
+import { ko } from "date-fns/locale";
+import { offset } from "@floating-ui/react";
+import "react-datepicker/dist/react-datepicker.css";
 import type { RewardEntry } from "@/app/api/admin/postbox/posts/route";
 import type { MailLocaleEntry } from "@/lib/firestore-mail-schema";
 import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
@@ -22,6 +26,10 @@ import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 
+registerLocale("ko", ko);
+
+/** 예약 시각 피커: 입력 왼쪽 정렬 + 살짝 왼쪽으로 당김 */
+const scheduleDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
 
 /** 우편 목록·차트 관리와 동일 (AdminGlobalLoadingOverlay 문구) */
 const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
@@ -108,16 +116,24 @@ function normalizePostboxChart(c: {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** `<input type="datetime-local">` 용 — 브라우저 로컬 기준(분 단위, UTC 아님) */
+function toDateTimeLocalValue(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function addDays(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 16);
+  d.setSeconds(0, 0);
+  return toDateTimeLocalValue(d);
 }
 
 function addHours(hours: number): string {
   const d = new Date();
-  d.setHours(d.getHours() + hours);
-  return d.toISOString().slice(0, 16);
+  d.setTime(d.getTime() + hours * 60 * 60 * 1000);
+  d.setSeconds(0, 0);
+  return toDateTimeLocalValue(d);
 }
 
 function makeId(): string {
@@ -149,10 +165,32 @@ const REPEAT_DAY_LABELS: Record<RepeatDay, string> = {
 };
 const ALL_REPEAT_DAYS: RepeatDay[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function addMinutes(minutes: number): string {
+/** 예약 허용 최소 시각: 지금 시점 기준 “다음 분” 시작(초·ms 0) */
+function scheduledEarliestAllowedDate(): Date {
   const d = new Date();
-  d.setMinutes(d.getMinutes() + minutes);
-  return d.toISOString().slice(0, 16);
+  d.setMinutes(d.getMinutes() + 1, 0, 0);
+  return d;
+}
+
+function startOfLocalDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/** 예약 시각을 허용 바닥 이상으로 맞춤(초·ms 0) */
+function clampScheduledDate(d: Date): Date {
+  const floor = scheduledEarliestAllowedDate();
+  const x = new Date(d);
+  x.setSeconds(0, 0);
+  if (x.getTime() < floor.getTime()) return new Date(floor);
+  return x;
+}
+
+function initialScheduledAtDate(): Date {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 5, 0, 0);
+  return clampScheduledDate(d);
 }
 
 // ── User Picker Modal ─────────────────────────────────────────────────────────
@@ -986,7 +1024,7 @@ function RewardDetailModal({ reward, onClose }: { reward: RewardItem; onClose: (
 
 export function PostRegisterModal({ onClose, onCreated }: Props) {
   const [dispatchType, setDispatchType] = useState<DispatchType>("immediate");
-  const [scheduledAt, setScheduledAt] = useState<string>(() => addHours(1));
+  const [scheduledAtDate, setScheduledAtDate] = useState<Date>(() => initialScheduledAtDate());
   const [repeatDays, setRepeatDays] = useState<RepeatDay[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
   const [repeatTime, setRepeatTime] = useState<string>("09:00");
   const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("ko", true), makeLangRow("en", false)]);
@@ -1039,6 +1077,16 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   useChartChangeSignal(() => {
     void loadPostboxCharts();
   }, bootstrapped);
+
+  // 예약 발송: 탭 전환 시 최소 시각 미만이면 올림
+  useEffect(() => {
+    if (dispatchType !== "scheduled") return;
+    setScheduledAtDate((prev) => clampScheduledDate(prev));
+  }, [dispatchType]);
+
+  const filterScheduledTime = useCallback((time: Date) => {
+    return time.getTime() >= scheduledEarliestAllowedDate().getTime();
+  }, []);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1156,9 +1204,10 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     setError(null);
 
     if (dispatchType === "scheduled") {
-      const scheduledDate = new Date(scheduledAt);
-      if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
-        setError("예약 발송 시각은 현재 시각보다 미래여야 합니다.");
+      const scheduledDate = scheduledAtDate;
+      const floor = scheduledEarliestAllowedDate();
+      if (!scheduledDate || scheduledDate.getTime() < floor.getTime()) {
+        setError("예약 발송 시각은 현재 시각 이후(최소 1분 뒤)여야 합니다.");
         return;
       }
     }
@@ -1226,7 +1275,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             dispatchType,
-            scheduledAt: dispatchType === "scheduled" ? new Date(scheduledAt).toISOString() : undefined,
+            scheduledAt: dispatchType === "scheduled" ? scheduledAtDate.toISOString() : undefined,
             repeatDays: dispatchType === "repeat" ? repeatDays : undefined,
             repeatTime: dispatchType === "repeat" ? repeatTime : undefined,
             postType: "Admin",
@@ -1254,7 +1303,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       setSubmitting(false);
     }
   }, [
-    dispatchType, scheduledAt, repeatDays, repeatTime,
+    dispatchType, scheduledAtDate, repeatDays, repeatTime,
     langRows, sender, expiryPreset, customExpiry,
     rewards, audienceMode, pickedUsers, onCreated,
   ]);
@@ -1334,12 +1383,25 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4 }}>
                   발송 시각 <span style={{ color: "#94a3b8", fontWeight: 400 }}>(현재 시각 이후만 설정 가능)</span>
                 </label>
-                <input
-                  type="datetime-local"
-                  value={scheduledAt}
-                  min={addMinutes(5)}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                  style={inputStyle}
+                <DatePicker
+                  selected={scheduledAtDate}
+                  onChange={(d: Date | null) => {
+                    if (d) setScheduledAtDate(clampScheduledDate(d));
+                  }}
+                  locale="ko"
+                  showTimeSelect
+                  timeIntervals={1}
+                  dateFormat="yyyy-MM-dd HH:mm"
+                  timeFormat="HH:mm"
+                  timeCaption="시각"
+                  minDate={startOfLocalDay(new Date())}
+                  filterTime={filterScheduledTime}
+                  popperPlacement="bottom-start"
+                  popperModifiers={scheduleDatePickerPopperModifiers}
+                  showPopperArrow={false}
+                  popperClassName="post-register-datepicker-popper"
+                  wrapperClassName="post-register-datepicker-wrap"
+                  className="post-register-datepicker-input"
                 />
               </div>
             )}

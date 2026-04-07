@@ -332,6 +332,26 @@ export function PostboxClient() {
     return pages;
   }, [page, totalPages]);
 
+  const scheduleJobsForActiveTab = useMemo(() => {
+    if (activeTab !== "scheduled" && activeTab !== "repeat") return [];
+    return scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat"));
+  }, [scheduleJobs, activeTab]);
+
+  const filteredScheduleJobs = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return scheduleJobsForActiveTab;
+    return scheduleJobsForActiveTab.filter((job) => {
+      if (job.title.toLowerCase().includes(q)) return true;
+      if (job.sender.toLowerCase().includes(q)) return true;
+      if (job.jobId.toLowerCase().includes(q)) return true;
+      if (job.content.toLowerCase().includes(q)) return true;
+      const rec = job.recipientUids ?? {};
+      return Object.entries(rec).some(
+        ([uid, label]) => uid.toLowerCase().includes(q) || String(label).toLowerCase().includes(q),
+      );
+    });
+  }, [scheduleJobsForActiveTab, search]);
+
   // ── Actions ────────────────────────────────────────────────────────────────
   function switchTab(tab: PostboxTab) {
     if (COMING_SOON_TABS.has(tab)) return;
@@ -395,15 +415,15 @@ export function PostboxClient() {
     });
   }
 
-  function toggleAllSchedule() {
-    const visible = scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat"));
+  const toggleAllSchedule = useCallback(() => {
+    const visible = filteredScheduleJobs;
     if (visible.length === 0) return;
     if (visible.every((job) => selectedScheduleJobs.has(job.jobId))) {
       setSelectedScheduleJobs(new Set());
       return;
     }
     setSelectedScheduleJobs(new Set(visible.map((job) => job.jobId)));
-  }
+  }, [filteredScheduleJobs, selectedScheduleJobs]);
 
   async function handleDeleteSelectedScheduleJobs() {
     if (selectedScheduleJobs.size === 0) return;
@@ -447,9 +467,8 @@ export function PostboxClient() {
 
   const allPageSelected = pageItems.length > 0 && pageItems.every((item) => selected.has(item.postId));
   const somePageSelected = pageItems.some((item) => selected.has(item.postId));
-  const visibleScheduleJobs = scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat"));
-  const allScheduleSelected = visibleScheduleJobs.length > 0 && visibleScheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId));
-  const someScheduleSelected = visibleScheduleJobs.some((job) => selectedScheduleJobs.has(job.jobId));
+  const allScheduleSelected = filteredScheduleJobs.length > 0 && filteredScheduleJobs.every((job) => selectedScheduleJobs.has(job.jobId));
+  const someScheduleSelected = filteredScheduleJobs.some((job) => selectedScheduleJobs.has(job.jobId));
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -531,7 +550,7 @@ export function PostboxClient() {
                     삭제
                   </button>
                 )}
-                {activeTab === "admin" && (
+                {(activeTab === "admin" || activeTab === "scheduled" || activeTab === "repeat") && (
                   <div style={{ position: "relative" }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
                       <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -747,14 +766,20 @@ export function PostboxClient() {
                         불러오는 중...
                       </td>
                     </tr>
-                  ) : scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat")).length === 0 ? (
+                  ) : scheduleJobsForActiveTab.length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
                         {activeTab === "scheduled" ? "등록된 예약 우편이 없습니다." : "등록된 반복 우편이 없습니다."}
                       </td>
                     </tr>
+                  ) : filteredScheduleJobs.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
+                        검색 결과가 없습니다.
+                      </td>
+                    </tr>
                   ) : (
-                    scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat")).map((job, idx) => {
+                    filteredScheduleJobs.map((job, idx) => {
                       const isCancelled = job.status === "cancelled";
                       const statusColor = isCancelled ? "#94a3b8" : job.status === "done" ? "#059669" : job.status === "failed" ? "#ef4444" : job.status === "processing" ? "#3b82f6" : "#f59e0b";
                       const statusLabel = { pending: "대기", processing: "처리중", done: "완료", cancelled: "취소됨", failed: "실패" }[job.status] ?? job.status;
@@ -803,7 +828,7 @@ export function PostboxClient() {
                               padding: postTbl.numberTdPadding,
                             }}
                           >
-                            {(page - 1) * pageSize + idx + 1}
+                            {idx + 1}
                           </td>
                           <td
                             style={{
