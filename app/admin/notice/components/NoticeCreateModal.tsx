@@ -10,11 +10,20 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import DatePicker, { registerLocale } from "react-datepicker";
+import { ko } from "date-fns/locale";
+import { offset } from "@floating-ui/react";
+import "react-datepicker/dist/react-datepicker.css";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { signalNoticeChange } from "@/lib/firestore-notice-signal";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import type { NoticeDoc, NoticeLocaleEntry, NoticePostSchedule } from "@/app/api/admin/notices/route";
 import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
+import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
+
+registerLocale("ko", ko);
+
+const noticeScheduleDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
 
 const MAX_BODY = 4000;
 const MAX_LANGS = 10;
@@ -39,9 +48,30 @@ function makeRow(language: string, fallback: boolean): LocaleRow {
   };
 }
 
-function toLocalDatetimeValue(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+function scheduledEarliestAllowedDate(): Date {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 1, 0, 0);
+  return d;
+}
+
+function startOfLocalDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function clampScheduledDate(d: Date): Date {
+  const floor = scheduledEarliestAllowedDate();
+  const x = new Date(d);
+  x.setSeconds(0, 0);
+  if (x.getTime() < floor.getTime()) return new Date(floor);
+  return x;
+}
+
+function initialScheduledAtDate(): Date {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 5, 0, 0);
+  return clampScheduledDate(d);
 }
 
 function labelForLang(code: string): string {
@@ -78,64 +108,12 @@ type Props = {
   listNotice?: NoticeDoc | null;
 };
 
-const DRAFT_KEY = "admin-notice-create-draft-v1";
+const NOTICE_CREATE_DRAFT_STORAGE_KEY = "admin-notice-create-draft-v1";
 
-type DraftV1 = {
-  v: 1;
-  noticeName: string;
-  postSchedule: NoticePostSchedule;
-  postingAtLocal: string;
-  isPublic: boolean;
-  activeId: string | null;
-  rows: LocaleRow[];
-};
-
-function parseDraft(): DraftV1 | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return null;
-    const d = JSON.parse(raw) as Partial<DraftV1>;
-    if (d.v !== 1 || !Array.isArray(d.rows) || d.rows.length < 1) return null;
-    const rows: LocaleRow[] = d.rows.map((r, i) => ({
-      id: typeof r?.id === "string" && r.id ? r.id : `row-${i}-${Math.random().toString(36).slice(2, 9)}`,
-      language: typeof r?.language === "string" ? r.language : "ko",
-      title: typeof r?.title === "string" ? r.title : "",
-      content: typeof r?.content === "string" ? r.content : "",
-      imageKey: typeof r?.imageKey === "string" ? r.imageKey : "",
-      fallback: r?.fallback === true,
-    }));
-    const fb = rows.filter((r) => r.fallback);
-    if (fb.length !== 1) {
-      rows.forEach((r, i) => {
-        r.fallback = i === 0;
-      });
-    }
-    return {
-      v: 1,
-      noticeName: typeof d.noticeName === "string" ? d.noticeName : "",
-      postSchedule: d.postSchedule === "scheduled" ? "scheduled" : "immediate",
-      postingAtLocal:
-        typeof d.postingAtLocal === "string" && d.postingAtLocal
-          ? d.postingAtLocal
-          : toLocalDatetimeValue(new Date()),
-      isPublic: d.isPublic !== false,
-      activeId: typeof d.activeId === "string" ? d.activeId : null,
-      rows,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function isDraftContentEmpty(noticeName: string, rows: LocaleRow[]): boolean {
-  if (noticeName.trim()) return false;
-  return !rows.some((r) => r.title.trim() || r.content.trim() || r.imageKey.trim());
-}
-
+/** 예전 자동 저장 키 제거(등록 성공 시 등) */
 export function clearNoticeCreateDraft() {
   try {
-    localStorage.removeItem(DRAFT_KEY);
+    localStorage.removeItem(NOTICE_CREATE_DRAFT_STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -159,7 +137,7 @@ export function NoticeCreateModal({
 
   const [noticeName, setNoticeName] = useState("");
   const [postSchedule, setPostSchedule] = useState<NoticePostSchedule>("immediate");
-  const [postingAtLocal, setPostingAtLocal] = useState(() => toLocalDatetimeValue(new Date()));
+  const [postingAtDate, setPostingAtDate] = useState<Date>(() => initialScheduledAtDate());
   const [rows, setRows] = useState<LocaleRow[]>(() => [makeRow("ko", true), makeRow("en", false)]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -178,15 +156,14 @@ export function NoticeCreateModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [draftHydrated, setDraftHydrated] = useState(false);
-  const [showRestoredHint, setShowRestoredHint] = useState(false);
   const [listNewerThanOpen, setListNewerThanOpen] = useState(false);
   const editOpenedSigRef = useRef("");
 
   function hydrateFormFromNotice(n: NoticeDoc) {
     setNoticeName(n.noticeTitle);
     setPostSchedule(n.postSchedule);
-    setPostingAtLocal(toLocalDatetimeValue(new Date(n.postingAt)));
+    const at = new Date(n.postingAt);
+    setPostingAtDate(n.postSchedule === "scheduled" ? clampScheduledDate(at) : at);
     setIsPublic(n.isPublic === "y");
     setAuthorName((n.author || "운영자").slice(0, 80));
     const ordered = orderedLocaleRowsForEdit(n.contents ?? []);
@@ -209,27 +186,10 @@ export function NoticeCreateModal({
   }
 
   useLayoutEffect(() => {
-    if (editNotice) {
-      hydrateFormFromNotice(editNotice);
-      editOpenedSigRef.current = noticeContentSig(editNotice);
-      setListNewerThanOpen(false);
-      setShowRestoredHint(false);
-      setDraftHydrated(true);
-      return;
-    }
-
-    const d = parseDraft();
-    if (d && !isDraftContentEmpty(d.noticeName, d.rows)) {
-      setNoticeName(d.noticeName);
-      setPostSchedule(d.postSchedule);
-      setPostingAtLocal(d.postingAtLocal);
-      setRows(d.rows);
-      setIsPublic(d.isPublic);
-      const aid = d.activeId;
-      setActiveId(aid && d.rows.some((r) => r.id === aid) ? aid : (d.rows[0]?.id ?? null));
-      setShowRestoredHint(true);
-    }
-    setDraftHydrated(true);
+    if (!editNotice) return;
+    hydrateFormFromNotice(editNotice);
+    editOpenedSigRef.current = noticeContentSig(editNotice);
+    setListNewerThanOpen(false);
   }, [editNotice?.uuid]);
 
   useEffect(() => {
@@ -245,30 +205,13 @@ export function NoticeCreateModal({
   }, [isEdit, listNotice]);
 
   useEffect(() => {
-    if (!draftHydrated) return;
-    if (editNotice) return;
-    if (isDraftContentEmpty(noticeName, rows)) {
-      clearNoticeCreateDraft();
-      return;
-    }
-    const t = setTimeout(() => {
-      try {
-        const payload: DraftV1 = {
-          v: 1,
-          noticeName,
-          postSchedule,
-          postingAtLocal,
-          isPublic,
-          activeId,
-          rows,
-        };
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
-      } catch {
-        /* quota / private mode */
-      }
-    }, 400);
-    return () => clearTimeout(t);
-  }, [draftHydrated, editNotice, noticeName, postSchedule, postingAtLocal, isPublic, activeId, rows]);
+    if (postSchedule !== "scheduled") return;
+    setPostingAtDate((prev) => clampScheduledDate(prev));
+  }, [postSchedule]);
+
+  const filterScheduledTime = useCallback((time: Date) => {
+    return time.getTime() >= scheduledEarliestAllowedDate().getTime();
+  }, []);
 
   const addableLangs = useMemo(
     () => NOTICE_LANG_CATALOG.filter((l) => !rows.some((r) => r.language === l.code)),
@@ -335,7 +278,15 @@ export function NoticeCreateModal({
   const handleSubmit = useCallback(async () => {
     setError(null);
     if (!canSubmit) return;
-    const postingIso = new Date(postingAtLocal.replace(" ", "T")).toISOString();
+    if (postSchedule === "scheduled") {
+      const floor = scheduledEarliestAllowedDate();
+      if (postingAtDate.getTime() < floor.getTime()) {
+        setError("예약 게시 시각은 현재 시각 이후(최소 1분 뒤)여야 합니다.");
+        return;
+      }
+    }
+    const postingIso =
+      postSchedule === "scheduled" ? postingAtDate.toISOString() : new Date().toISOString();
     const author =
       isEdit
         ? authorName.trim() || "운영자"
@@ -387,7 +338,7 @@ export function NoticeCreateModal({
     }
   }, [
     canSubmit,
-    postingAtLocal,
+    postingAtDate,
     noticeName,
     authorDisplay,
     authorName,
@@ -412,16 +363,13 @@ export function NoticeCreateModal({
         justifyContent: "center",
         padding: 12,
       }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !submitting) onClose();
-      }}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="notice-create-modal-title"
         style={{
-          width: "min(1032px, calc(100vw - 24px))",
+          width: "min(860px, calc(100vw - 24px))",
           height: "min(92vh, 1080px)",
           maxHeight: "min(92vh, 1080px)",
           display: "flex",
@@ -431,7 +379,6 @@ export function NoticeCreateModal({
           boxShadow: "0 24px 64px rgba(0,0,0,0.2)",
           overflow: "hidden",
         }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div
           style={{
@@ -447,7 +394,7 @@ export function NoticeCreateModal({
             id="notice-create-modal-title"
             style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}
           >
-            {isEdit ? "공지 수정하기" : "공지 생성하기"}
+            {isEdit ? "공지 수정하기" : "공지 등록"}
           </h2>
           <button
             type="button"
@@ -467,42 +414,6 @@ export function NoticeCreateModal({
             ×
           </button>
         </div>
-
-        {showRestoredHint && !isEdit && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              padding: "8px 14px",
-              background: "#eff6ff",
-              borderBottom: "1px solid #bfdbfe",
-              fontSize: 13,
-              color: "#1e40af",
-              flexShrink: 0,
-            }}
-          >
-            <span>이전에 작성하던 내용을 불러왔습니다. (이 브라우저에 자동 저장됨)</span>
-            <button
-              type="button"
-              onClick={() => setShowRestoredHint(false)}
-              style={{
-                flexShrink: 0,
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: "1px solid #93c5fd",
-                background: "#fff",
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#1d4ed8",
-                cursor: "pointer",
-              }}
-            >
-              확인
-            </button>
-          </div>
-        )}
 
         {listNewerThanOpen && isEdit && listNotice && (
           <div
@@ -568,11 +479,11 @@ export function NoticeCreateModal({
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr 1fr",
-                    gap: "8px 22px",
+                    gap: "10px 22px",
                     alignItems: "start",
                   }}
                 >
-                  <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ minWidth: 0 }}>
                     <MetaLabel>공지 이름</MetaLabel>
                     <input
                       type="text"
@@ -584,23 +495,6 @@ export function NoticeCreateModal({
                     />
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <MetaLabel>게시일</MetaLabel>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                      <RadioChip compact active={postSchedule === "immediate"} onClick={() => setPostSchedule("immediate")}>
-                        즉시 게시
-                      </RadioChip>
-                      <RadioChip compact active={postSchedule === "scheduled"} onClick={() => setPostSchedule("scheduled")}>
-                        예약 게시
-                      </RadioChip>
-                    </div>
-                    <input
-                      type="datetime-local"
-                      value={postingAtLocal}
-                      onChange={(e) => setPostingAtLocal(e.target.value)}
-                      style={{ ...inputCompact, maxWidth: "100%" }}
-                    />
-                  </div>
-                  <div>
                     <MetaLabel>작성자</MetaLabel>
                     {isEdit ? (
                       <input
@@ -627,6 +521,47 @@ export function NoticeCreateModal({
                       </div>
                     )}
                   </div>
+                  <div style={{ minWidth: 0 }}>
+                    <MetaLabel>게시일</MetaLabel>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                      <RadioChip compact active={postSchedule === "immediate"} onClick={() => setPostSchedule("immediate")}>
+                        즉시 게시
+                      </RadioChip>
+                      <RadioChip compact active={postSchedule === "scheduled"} onClick={() => setPostSchedule("scheduled")}>
+                        예약 게시
+                      </RadioChip>
+                    </div>
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    {postSchedule === "scheduled" ? (
+                      <>
+                        <MetaLabel>
+                          게시 시각{" "}
+                          <span style={{ color: "#94a3b8", fontWeight: 400 }}>(현재 시각 이후만 설정 가능)</span>
+                        </MetaLabel>
+                        <DatePicker
+                          selected={postingAtDate}
+                          onChange={(d: Date | null) => {
+                            if (d) setPostingAtDate(clampScheduledDate(d));
+                          }}
+                          locale="ko"
+                          showTimeSelect
+                          timeIntervals={1}
+                          dateFormat={SCHEDULED_AT_DISPLAY_FORMAT}
+                          timeFormat="HH:mm"
+                          timeCaption="시각"
+                          minDate={startOfLocalDay(new Date())}
+                          filterTime={filterScheduledTime}
+                          popperPlacement="bottom-start"
+                          popperModifiers={noticeScheduleDatePickerPopperModifiers}
+                          showPopperArrow={false}
+                          popperClassName="post-register-datepicker-popper"
+                          wrapperClassName="post-register-datepicker-wrap"
+                          className="post-register-datepicker-input"
+                        />
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               </section>
 
@@ -641,23 +576,10 @@ export function NoticeCreateModal({
               >
                 <div
                   style={{
-                    flexShrink: 0,
-                    padding: "8px 14px 6px",
-                    borderBottom: "1px solid #f1f5f9",
-                    fontSize: 14,
-                    fontWeight: 800,
-                    color: "#0f172a",
-                  }}
-                >
-                  공지 작성
-                </div>
-
-                <div
-                  style={{
                     flex: 1,
                     minHeight: 0,
                     display: "grid",
-                    gridTemplateColumns: "minmax(200px, 10fr) minmax(0, 42fr)",
+                    gridTemplateColumns: "minmax(168px, 9fr) minmax(0, 33fr)",
                     overflow: "hidden",
                     alignItems: "stretch",
                   }}
@@ -985,7 +907,7 @@ export function NoticeCreateModal({
                     cursor: !canSubmit || submitting ? "not-allowed" : "pointer",
                   }}
                 >
-                  {submitting ? (isEdit ? "저장 중…" : "생성 중…") : isEdit ? "저장하기" : "생성하기"}
+                  {submitting ? (isEdit ? "저장 중…" : "등록 중…") : isEdit ? "저장하기" : "등록하기"}
                 </button>
               </div>
             </footer>

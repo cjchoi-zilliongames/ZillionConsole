@@ -29,6 +29,7 @@ import { useResizableAdminTableColumns } from "@/lib/use-resizable-admin-table-c
 import { usePostboxChangeSignal } from "./hooks/usePostboxChangeSignal";
 import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
+import { formatScheduledAtKo } from "@/lib/format-scheduled-at-ko";
 
 const POSTBOX_COL_RESIZE_LABELS = [
   "선택 열과 번호 열 사이 너비 조절",
@@ -894,7 +895,7 @@ export function PostboxClient() {
                             }}
                           >
                             {sendAt ? (activeTab === "scheduled"
-                              ? sendAt.toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+                              ? formatScheduledAtKo(sendAt)
                               : sendAt.toLocaleDateString("ko-KR")) : "—"}
                           </td>
                           <td

@@ -10,11 +10,13 @@ import {
 } from "@/lib/firestore-mail-schema";
 import type { RewardEntry, PostTargetAudience, PostRecipientUidMap } from "@/app/api/admin/postbox/posts/route";
 import { uploadRecipientList } from "@/lib/mail-dispatches-storage";
+import { computeNextRunAt, type RepeatDay } from "@/lib/postbox-compute-next-run";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export type RepeatDay = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
+export type { RepeatDay };
+export { computeNextRunAt };
 export type MailScheduleJobType = "scheduled" | "repeat";
 export type MailScheduleJobStatus = "pending" | "processing" | "done" | "cancelled" | "failed";
 
@@ -41,35 +43,6 @@ export type MailScheduleJob = {
   /** 어느 컬렉션에 저장됐는지 */
   mailStorage: "global_mails" | "personal_mail_dispatches";
 };
-
-export function computeNextRunAt(repeatDays: RepeatDay[], repeatTime: string): Date {
-  const parts = repeatTime.split(":");
-  const hours = parseInt(parts[0] ?? "0", 10);
-  const minutes = parseInt(parts[1] ?? "0", 10);
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const now = new Date();
-
-  for (let offset = 0; offset <= 7; offset++) {
-    const candidate = new Date(now);
-    candidate.setUTCDate(now.getUTCDate() + offset);
-    candidate.setUTCHours(hours, minutes, 0, 0);
-    if (candidate <= now) continue;
-    const dayName = dayNames[candidate.getUTCDay()];
-    if (repeatDays.includes(dayName as RepeatDay)) {
-      return candidate;
-    }
-  }
-
-  // Fallback: 다음 주 첫 번째 요일
-  const firstDay = repeatDays[0]!;
-  const targetDayIdx = dayNames.indexOf(firstDay);
-  const nowDay = now.getUTCDay();
-  const daysUntil = ((targetDayIdx - nowDay + 7) % 7) || 7;
-  const candidate = new Date(now);
-  candidate.setUTCDate(now.getUTCDate() + daysUntil);
-  candidate.setUTCHours(hours, minutes, 0, 0);
-  return candidate;
-}
 
 function makeScheduleJobId(prefix: "gsj" | "psj"): string {
   const now = new Date();

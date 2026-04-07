@@ -25,6 +25,8 @@ import { useChartChangeSignal } from "@/app/admin/spec/hooks/useChartChangeSigna
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
+import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
+import { computeNextRunAt, type RepeatDay } from "@/lib/postbox-compute-next-run";
 
 registerLocale("ko", ko);
 
@@ -36,7 +38,7 @@ const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type ExpiryPreset = "1" | "7" | "15" | "30" | "custom";
+type ExpiryPreset = "1" | "7" | "14" | "30" | "custom";
 
 const MAX_MAIL_LANGS = 10;
 const MAX_MAIL_CONTENT = 500;
@@ -158,7 +160,6 @@ function headersRowToMap(headers: string[], row: string[]): Record<string, strin
 
 
 type DispatchType = "immediate" | "scheduled" | "repeat";
-type RepeatDay = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 
 const REPEAT_DAY_LABELS: Record<RepeatDay, string> = {
   Mon: "월", Tue: "화", Wed: "수", Thu: "목", Fri: "금", Sat: "토", Sun: "일",
@@ -191,6 +192,36 @@ function initialScheduledAtDate(): Date {
   const d = new Date();
   d.setMinutes(d.getMinutes() + 5, 0, 0);
   return clampScheduledDate(d);
+}
+
+/** 만료 직접 입력 DatePicker 하한: 즉시=지금+1분, 예약=발송+1분, 반복=첫 실행+1분(각각 현재 시각 하한과 max) */
+function expiryPickerFloor(
+  dispatchType: DispatchType,
+  scheduledAt: Date,
+  repeatDays: RepeatDay[],
+  repeatTime: string,
+): Date {
+  const nowFloor = scheduledEarliestAllowedDate();
+  if (dispatchType === "immediate") {
+    return nowFloor;
+  }
+  if (dispatchType === "scheduled") {
+    const s = new Date(scheduledAt);
+    s.setSeconds(0, 0);
+    const afterSend = new Date(s.getTime() + 60 * 1000);
+    return new Date(Math.max(nowFloor.getTime(), afterSend.getTime()));
+  }
+  const next = computeNextRunAt(repeatDays, repeatTime);
+  next.setSeconds(0, 0);
+  const afterFirst = new Date(next.getTime() + 60 * 1000);
+  return new Date(Math.max(nowFloor.getTime(), afterFirst.getTime()));
+}
+
+function clampCustomExpiryToFloor(d: Date, floor: Date): Date {
+  const x = new Date(d);
+  x.setSeconds(0, 0);
+  if (x.getTime() < floor.getTime()) return new Date(floor);
+  return x;
 }
 
 // ── User Picker Modal ─────────────────────────────────────────────────────────
@@ -1088,6 +1119,47 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     return time.getTime() >= scheduledEarliestAllowedDate().getTime();
   }, []);
 
+  /** 반복 발송 시각 피커: 오늘(UTC) 날짜 + repeatTime — 표시용, API는 HH:mm(UTC)만 사용 */
+  const repeatPickerSelected = useMemo(() => {
+    const now = new Date();
+    const [hh, mm] = repeatTime.split(":").map((x) => parseInt(x, 10));
+    return new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      Number.isFinite(hh) ? hh : 0,
+      Number.isFinite(mm) ? mm : 0,
+      0,
+      0
+    ));
+  }, [repeatTime]);
+
+  const customExpiryFloor = useMemo(
+    () => expiryPickerFloor(dispatchType, scheduledAtDate, repeatDays, repeatTime),
+    [dispatchType, scheduledAtDate, repeatDays, repeatTime],
+  );
+
+  const filterCustomExpiryTime = useCallback(
+    (t: Date) => t.getTime() >= customExpiryFloor.getTime(),
+    [customExpiryFloor],
+  );
+
+  const customExpirySelected = useMemo(() => {
+    const d = new Date(customExpiry);
+    if (!Number.isFinite(d.getTime())) return customExpiryFloor;
+    return clampCustomExpiryToFloor(d, customExpiryFloor);
+  }, [customExpiry, customExpiryFloor]);
+
+  useLayoutEffect(() => {
+    if (expiryPreset !== "custom") return;
+    setCustomExpiry((prev) => {
+      const d = new Date(prev);
+      if (!Number.isFinite(d.getTime())) return toDateTimeLocalValue(customExpiryFloor);
+      if (d.getTime() < customExpiryFloor.getTime()) return toDateTimeLocalValue(customExpiryFloor);
+      return prev;
+    });
+  }, [expiryPreset, customExpiryFloor]);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1183,7 +1255,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     switch (expiryPreset) {
       case "1":    return addHours(24);
       case "7":    return addDays(7);
-      case "15":   return addDays(15);
+      case "14":   return addDays(14);
       case "30":   return addDays(30);
       case "custom": return customExpiry;
     }
@@ -1193,11 +1265,38 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     switch (expiryPreset) {
       case "1":  return 24 * 60 * 60 * 1000;
       case "7":  return 7 * 24 * 60 * 60 * 1000;
-      case "15": return 15 * 24 * 60 * 60 * 1000;
+      case "14": return 14 * 24 * 60 * 60 * 1000;
       case "30": return 30 * 24 * 60 * 60 * 1000;
       case "custom": return 7 * 24 * 60 * 60 * 1000;
     }
   }
+
+  /** 만료 시간 피커: 프리셋이면 발송·첫 실행 기준 계산 시각, custom이면 직접 값 */
+  const expiresAtPickerSelected = useMemo((): Date => {
+    if (expiryPreset === "custom") {
+      return customExpirySelected;
+    }
+    let d: Date;
+    if (dispatchType === "immediate") {
+      d = new Date(computeExpiresAt());
+    } else if (dispatchType === "scheduled") {
+      d = new Date(scheduledAtDate.getTime() + computeExpiresAfterMs());
+    } else {
+      d = new Date(
+        computeNextRunAt(repeatDays, repeatTime).getTime() + computeExpiresAfterMs(),
+      );
+    }
+    if (!Number.isFinite(d.getTime())) return customExpiryFloor;
+    return clampCustomExpiryToFloor(d, customExpiryFloor);
+  }, [
+    expiryPreset,
+    customExpirySelected,
+    customExpiryFloor,
+    dispatchType,
+    scheduledAtDate,
+    repeatDays,
+    repeatTime,
+  ]);
 
   const handleSubmit = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -1212,8 +1311,24 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       }
     }
     if (dispatchType === "repeat" && repeatDays.length === 0) {
-      setError("반복 발송할 요일을 최소 하나 선택해 주세요.");
+      setError("발송 요일을 최소 하나 선택해 주세요.");
       return;
+    }
+
+    if (expiryPreset === "custom" && dispatchType !== "immediate") {
+      const customEnd = new Date(customExpiry).getTime();
+      if (!Number.isFinite(customEnd)) {
+        setError("만료 시각(직접 입력)을 올바르게 설정해 주세요.");
+        return;
+      }
+      const dispatchStart =
+        dispatchType === "scheduled"
+          ? scheduledAtDate.getTime()
+          : computeNextRunAt(repeatDays, repeatTime).getTime();
+      if (customEnd <= dispatchStart) {
+        setError("만료 시각은 발송 시각(또는 첫 반복 발송 시각)보다 이후여야 합니다.");
+        return;
+      }
     }
 
     const validRows = langRows.filter((r) => r.title.trim() && r.content.trim());
@@ -1270,6 +1385,15 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         const data = await res.json() as { ok: boolean; error?: string };
         if (!data.ok) throw new Error(data.error ?? "등록 실패");
       } else {
+        let expiresAfterMsPayload = computeExpiresAfterMs();
+        if (expiryPreset === "custom") {
+          const customEnd = new Date(customExpiry).getTime();
+          if (dispatchType === "scheduled") {
+            expiresAfterMsPayload = customEnd - scheduledAtDate.getTime();
+          } else {
+            expiresAfterMsPayload = customEnd - computeNextRunAt(repeatDays, repeatTime).getTime();
+          }
+        }
         const res = await authFetch("/api/admin/postbox/schedule", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1283,7 +1407,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
             content: fallbackRow.content,
             localeContents,
             sender: sender.trim() || "운영팀",
-            expiresAfterMs: computeExpiresAfterMs(),
+            expiresAfterMs: expiresAfterMsPayload,
             rewards: rewardEntries,
             targetAudience: audienceMode === "specific" ? "specific" : "all",
             recipientUids:
@@ -1356,134 +1480,178 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: "20px 24px 24px" }}>
-          {/* 발송일 */}
-          <FormRow label="발송일" required>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: dispatchType !== "immediate" ? 12 : 0 }}>
-              <ToggleBtn active={dispatchType === "immediate"} onClick={() => setDispatchType("immediate")}>
-                즉시 발송
-              </ToggleBtn>
-              <ToggleBtn active={dispatchType === "scheduled"} onClick={() => {
-                setDispatchType("scheduled");
-                if (expiryPreset === "custom") setExpiryPreset("7");
-              }}>
-                예약 발송
-              </ToggleBtn>
-              <ToggleBtn active={dispatchType === "repeat"} onClick={() => {
-                setDispatchType("repeat");
-                if (expiryPreset === "custom") setExpiryPreset("7");
-              }}>
-                반복 발송
-              </ToggleBtn>
-            </div>
-            {dispatchType === "immediate" && (
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>등록 즉시 발송됩니다.</p>
-            )}
-            {dispatchType === "scheduled" && (
-              <div>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4 }}>
-                  발송 시각 <span style={{ color: "#94a3b8", fontWeight: 400 }}>(현재 시각 이후만 설정 가능)</span>
+          {/* 발송일 | 발송 시각·요일+UTC시각 · 만료기간 | 만료 시간(표시) — 반복 포함 */}
+          <div style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "auto minmax(0, 1fr)",
+                columnGap: 24,
+                rowGap: 10,
+                alignItems: "start",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+                  발송일<span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
+                </label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <ToggleBtn active={dispatchType === "immediate"} onClick={() => setDispatchType("immediate")}>
+                    즉시 발송
+                  </ToggleBtn>
+                  <ToggleBtn active={dispatchType === "scheduled"} onClick={() => setDispatchType("scheduled")}>
+                    예약 발송
+                  </ToggleBtn>
+                  <ToggleBtn active={dispatchType === "repeat"} onClick={() => setDispatchType("repeat")}>
+                    반복 발송
+                  </ToggleBtn>
+                </div>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                {dispatchType === "scheduled" && (
+                  <>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+                      발송 시각{" "}
+                      <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 12 }}>(현재 시각 이후만 설정 가능)</span>
+                    </label>
+                    <DatePicker
+                      selected={scheduledAtDate}
+                      onChange={(d: Date | null) => {
+                        if (d) setScheduledAtDate(clampScheduledDate(d));
+                      }}
+                      locale="ko"
+                      showTimeSelect
+                      timeIntervals={1}
+                      dateFormat={SCHEDULED_AT_DISPLAY_FORMAT}
+                      timeFormat="HH:mm"
+                      timeCaption="시각"
+                      minDate={startOfLocalDay(new Date())}
+                      filterTime={filterScheduledTime}
+                      popperPlacement="bottom-start"
+                      popperModifiers={scheduleDatePickerPopperModifiers}
+                      showPopperArrow={false}
+                      popperClassName="post-register-datepicker-popper"
+                      wrapperClassName="post-register-datepicker-wrap"
+                      className="post-register-datepicker-input"
+                    />
+                  </>
+                )}
+                {dispatchType === "repeat" && (
+                  <>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+                      발송 요일
+                      <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 11, marginLeft: 6 }}>(UTC)</span>
+                    </label>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                        {ALL_REPEAT_DAYS.map((day) => {
+                          const isOn = repeatDays.includes(day);
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => setRepeatDays((prev) =>
+                                isOn ? prev.filter((d) => d !== day) : [...prev, day]
+                              )}
+                              style={{
+                                padding: "4px 7px",
+                                borderRadius: 6,
+                                border: isOn ? "1.5px solid #0f172a" : "1.5px solid #e2e8f0",
+                                background: isOn ? "#0f172a" : "#fff",
+                                color: isOn ? "#fff" : "#475569",
+                                fontWeight: isOn ? 700 : 500,
+                                fontSize: 12,
+                                cursor: "pointer",
+                                transition: "all 0.1s",
+                              }}
+                            >
+                              {REPEAT_DAY_LABELS[day]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <DatePicker
+                        selected={repeatPickerSelected}
+                        onChange={(d: Date | null) => {
+                          if (!d) return;
+                          setRepeatTime(
+                            `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
+                          );
+                        }}
+                        timeZone="UTC"
+                        locale="ko"
+                        showTimeSelect
+                        timeIntervals={1}
+                        dateFormat="HH:mm"
+                        timeFormat="HH:mm"
+                        timeCaption="시각"
+                        popperPlacement="bottom-start"
+                        popperModifiers={scheduleDatePickerPopperModifiers}
+                        showPopperArrow={false}
+                        popperClassName="post-register-datepicker-popper post-register-repeat-datepicker-popper"
+                        wrapperClassName="post-register-datepicker-wrap post-register-repeat-utc-time-wrap"
+                        className="post-register-datepicker-input"
+                        ariaLabel="발송 시각 (UTC)"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+                  만료기간<span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
+                </label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  {(["1", "7", "14", "30"] as ExpiryPreset[]).map((val) => (
+                    <ToggleBtn key={val} active={expiryPreset === val} onClick={() => setExpiryPreset(val)}>
+                      {`${val}일`}
+                    </ToggleBtn>
+                  ))}
+                </div>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
+                  만료 시간{" "}
+                  <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 12 }}>
+                    (발송·첫 실행 시각 이후)
+                  </span>
                 </label>
                 <DatePicker
-                  selected={scheduledAtDate}
+                  selected={expiresAtPickerSelected}
                   onChange={(d: Date | null) => {
-                    if (d) setScheduledAtDate(clampScheduledDate(d));
+                    if (!d) return;
+                    setExpiryPreset("custom");
+                    setCustomExpiry(toDateTimeLocalValue(clampCustomExpiryToFloor(d, customExpiryFloor)));
                   }}
+                  openToDate={customExpiryFloor}
                   locale="ko"
                   showTimeSelect
                   timeIntervals={1}
-                  dateFormat="yyyy-MM-dd HH:mm"
+                  dateFormat={SCHEDULED_AT_DISPLAY_FORMAT}
                   timeFormat="HH:mm"
                   timeCaption="시각"
-                  minDate={startOfLocalDay(new Date())}
-                  filterTime={filterScheduledTime}
+                  minDate={startOfLocalDay(customExpiryFloor)}
+                  filterTime={filterCustomExpiryTime}
                   popperPlacement="bottom-start"
                   popperModifiers={scheduleDatePickerPopperModifiers}
                   showPopperArrow={false}
                   popperClassName="post-register-datepicker-popper"
                   wrapperClassName="post-register-datepicker-wrap"
                   className="post-register-datepicker-input"
+                  shouldCloseOnSelect={false}
+                  ariaLabel="만료 시각"
                 />
               </div>
-            )}
-            {dispatchType === "repeat" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                    발송 요일
-                  </label>
-                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    {ALL_REPEAT_DAYS.map((day) => {
-                      const isOn = repeatDays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          type="button"
-                          onClick={() => setRepeatDays((prev) =>
-                            isOn ? prev.filter((d) => d !== day) : [...prev, day]
-                          )}
-                          style={{
-                            padding: "5px 11px",
-                            borderRadius: 6,
-                            border: isOn ? "1.5px solid #0f172a" : "1.5px solid #e2e8f0",
-                            background: isOn ? "#0f172a" : "#fff",
-                            color: isOn ? "#fff" : "#475569",
-                            fontWeight: isOn ? 700 : 500,
-                            fontSize: 13,
-                            cursor: "pointer",
-                            transition: "all 0.1s",
-                          }}
-                        >
-                          {REPEAT_DAY_LABELS[day]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4 }}>
-                    발송 시각 <span style={{ color: "#94a3b8", fontWeight: 400, fontSize: 11 }}>(UTC 기준)</span>
-                  </label>
-                  <input
-                    type="time"
-                    value={repeatTime}
-                    onChange={(e) => setRepeatTime(e.target.value)}
-                    style={{ ...inputStyle, width: "auto", minWidth: 120 }}
-                  />
-                </div>
-              </div>
-            )}
-          </FormRow>
-
-          <Divider />
-
-          {/* 만료기간 */}
-          <FormRow label="만료기간" required>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: expiryPreset === "custom" && dispatchType === "immediate" ? 8 : 4 }}>
-              {(["1", "7", "15", "30"] as ExpiryPreset[]).map((val) => (
-                <ToggleBtn key={val} active={expiryPreset === val} onClick={() => setExpiryPreset(val)}>
-                  {val === "1" ? "하루 이내" : `${val}일`}
-                </ToggleBtn>
-              ))}
-              {dispatchType === "immediate" && (
-                <ToggleBtn active={expiryPreset === "custom"} onClick={() => setExpiryPreset("custom")}>
-                  직접 입력
-                </ToggleBtn>
-              )}
             </div>
-            {expiryPreset === "custom" && dispatchType === "immediate" && (
-              <input
-                type="datetime-local"
-                value={customExpiry}
-                onChange={(e) => setCustomExpiry(e.target.value)}
-                style={inputStyle}
-              />
-            )}
-            {dispatchType !== "immediate" && (
-              <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
-                발송 시각으로부터 {expiryPreset === "1" ? "하루" : `${expiryPreset}일`} 후 만료
-              </p>
-            )}
-          </FormRow>
+          </div>
 
           <Divider />
 
@@ -1999,6 +2167,9 @@ function ToggleBtn({
   disabled,
   onMouseMove,
   onMouseLeave,
+  ariaLabel,
+  title,
+  iconOnly,
 }: {
   active: boolean;
   onClick: () => void;
@@ -2006,11 +2177,16 @@ function ToggleBtn({
   disabled?: boolean;
   onMouseMove?: (e: MouseEvent<HTMLButtonElement>) => void;
   onMouseLeave?: () => void;
+  ariaLabel?: string;
+  title?: string;
+  iconOnly?: boolean;
 }) {
   const isActive = active && !disabled;
   return (
     <button
       type="button"
+      aria-label={ariaLabel}
+      title={title}
       aria-disabled={disabled}
       onClick={() => {
         if (!disabled) onClick();
@@ -2018,7 +2194,7 @@ function ToggleBtn({
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
       style={{
-        padding: "6px 14px",
+        padding: iconOnly ? "6px 10px" : "6px 14px",
         borderRadius: 8,
         border: disabled
           ? "1.5px solid #e2e8f0"
