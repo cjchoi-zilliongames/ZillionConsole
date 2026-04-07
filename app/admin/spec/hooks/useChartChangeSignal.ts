@@ -38,6 +38,17 @@ export function useChartChangeSignal(
       onChangedRef.current(data);
     });
 
-    return unsubscribe;
+    // 탭이 다시 활성화될 때 데이터를 갱신해 백그라운드 정체 현상을 방지
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        onChangedRef.current(null);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [enabled]);
 }

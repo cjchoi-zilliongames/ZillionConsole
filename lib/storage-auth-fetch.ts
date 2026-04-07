@@ -19,8 +19,17 @@ export function storageAuthFetch(
     if (app) {
       const user = getAuth(app).currentUser;
       if (user) {
-        const token = await user.getIdToken();
-        headers.set("Authorization", `Bearer ${token}`);
+        try {
+          // 백그라운드 탭에서 돌아올 때 getIdToken()이 수 초간 블록되는 경우가 있음.
+          // 3초 이내에 토큰을 얻지 못하면 세션 쿠키 인증으로 폴백.
+          const token = await Promise.race<string | null>([
+            user.getIdToken(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+          ]);
+          if (token) headers.set("Authorization", `Bearer ${token}`);
+        } catch {
+          // getIdToken 실패 시 세션 쿠키로 폴백
+        }
       }
     }
     return adminFetch(input, { ...init, headers });
