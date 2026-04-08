@@ -28,7 +28,7 @@ import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
-import { computeNextRunAt, type RepeatDay } from "@/lib/postbox-compute-next-run";
+import { computeNextRunAt, repeatKstToUtc, type RepeatDay } from "@/lib/postbox-compute-next-run";
 import type { DispatchMode } from "@/lib/firestore-mail-schema";
 
 registerLocale("ko", ko);
@@ -228,7 +228,8 @@ function expiryPickerFloor(
     const afterSend = new Date(s.getTime() + 60 * 1000);
     return new Date(Math.max(nowFloor.getTime(), afterSend.getTime()));
   }
-  const next = computeNextRunAt(repeatDays, repeatTime);
+  const { utcTime, utcDays } = repeatKstToUtc(repeatTime, repeatDays);
+  const next = computeNextRunAt(utcDays, utcTime);
   next.setSeconds(0, 0);
   const afterFirst = new Date(next.getTime() + 60 * 1000);
   return new Date(Math.max(nowFloor.getTime(), afterFirst.getTime()));
@@ -1305,8 +1306,9 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     } else if (dispatchType === "scheduled") {
       d = new Date(scheduledAtDate.getTime() + computeExpiresAfterMs());
     } else {
+      const rep = repeatKstToUtc(repeatTime, repeatDays);
       d = new Date(
-        computeNextRunAt(repeatDays, repeatTime).getTime() + computeExpiresAfterMs(),
+        computeNextRunAt(rep.utcDays, rep.utcTime).getTime() + computeExpiresAfterMs(),
       );
     }
     if (!Number.isFinite(d.getTime())) return customExpiryFloor;
@@ -1389,9 +1391,10 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         expiresAtIso = new Date(scheduledAtDate.getTime() + computeExpiresAfterMs()).toISOString();
       }
     } else {
-      visibleFromIso = computeNextRunAt(repeatDays, repeatTime).toISOString();
-      bodyRepeatDays = repeatDays;
-      bodyRepeatTime = repeatTime;
+      const { utcTime, utcDays } = repeatKstToUtc(repeatTime, repeatDays);
+      visibleFromIso = computeNextRunAt(utcDays, utcTime).toISOString();
+      bodyRepeatDays = utcDays;
+      bodyRepeatTime = utcTime;
       bodyRepeatWindowMs = computeExpiresAfterMs();
       expiresAtIso = new Date("2099-12-31T23:59:59Z").toISOString();
     }
@@ -1582,27 +1585,30 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                           );
                         })}
                       </div>
-                      <input
-                        type="time"
-                        value={repeatTime}
-                        onChange={(e) => setRepeatTime(e.target.value)}
-                        aria-label="반복 발송 시각 (UTC)"
-                        style={{
-                          width: "7.7rem",
-                          minHeight: 33.5,
-                          padding: "6px 8px",
-                          borderRadius: 10,
-                          border: "1px solid #cbd5e1",
-                          fontSize: 13,
-                          fontFamily: "inherit",
-                          color: "#0f172a",
-                          background: "#fff",
-                          cursor: "pointer",
-                          fontVariantNumeric: "tabular-nums",
-                          outline: "none",
-                          boxSizing: "border-box",
-                        }}
-                      />
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <input
+                          type="time"
+                          value={repeatTime}
+                          onChange={(e) => setRepeatTime(e.target.value)}
+                          aria-label="반복 발송 시각 (KST)"
+                          style={{
+                            width: "7.7rem",
+                            minHeight: 33.5,
+                            padding: "6px 8px",
+                            borderRadius: 10,
+                            border: "1px solid #cbd5e1",
+                            fontSize: 13,
+                            fontFamily: "inherit",
+                            color: "#0f172a",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontVariantNumeric: "tabular-nums",
+                            outline: "none",
+                            boxSizing: "border-box",
+                          }}
+                        />
+                        <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, whiteSpace: "nowrap" }}>KST</span>
+                      </div>
                     </div>
                   </>
                 )}

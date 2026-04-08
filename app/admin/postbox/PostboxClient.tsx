@@ -30,6 +30,7 @@ import { usePostboxChangeSignal } from "./hooks/usePostboxChangeSignal";
 import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { formatScheduledAtKo } from "@/lib/format-scheduled-at-ko";
+import { repeatUtcToKst, type RepeatDay } from "@/lib/postbox-compute-next-run";
 
 const POSTBOX_COL_RESIZE_LABELS = [
   "선택 열과 번호 열 사이 너비 조절",
@@ -683,8 +684,11 @@ export function PostboxClient() {
                         const isSelected = selected.has(item.postId);
                         const status = resolveStatus(item);
                         const dayMap: Record<string, string> = { Mon: "월", Tue: "화", Wed: "수", Thu: "목", Fri: "금", Sat: "토", Sun: "일" };
-                        const repeatLabel = item.repeatDays
-                          ? `${item.repeatDays.map((d) => dayMap[d] ?? d).join(" ")}${item.repeatTime ? ` ${item.repeatTime}` : ""}`
+                        const kst = item.repeatDays && item.repeatTime
+                          ? repeatUtcToKst(item.repeatTime, item.repeatDays as RepeatDay[])
+                          : null;
+                        const repeatLabel = kst
+                          ? `${kst.kstDays.map((d) => dayMap[d] ?? d).join(" ")} ${kst.kstTime}`
                           : activeTab === "scheduled" && item.visibleFrom
                             ? formatScheduledAtKo(new Date(item.visibleFrom))
                             : "—";

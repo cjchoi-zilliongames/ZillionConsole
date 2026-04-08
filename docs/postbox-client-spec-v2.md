@@ -24,7 +24,7 @@
 | `dispatchMode` | `"immediate" \| "scheduled" \| "repeat"` | 항상 | 발송 방식. 기존 문서에는 없으므로 **없으면 `"immediate"`** 취급 |
 | `visibleFrom` | `Timestamp` | `scheduled`, `repeat` | 이 시각 이후부터 클라이언트에 표시 |
 | `repeatDays` | `string[]` | `repeat` | 반복 요일. `"Mon"` `"Tue"` `"Wed"` `"Thu"` `"Fri"` `"Sat"` `"Sun"` |
-| `repeatTime` | `string` | `repeat` | 반복 시각. `"HH:mm"` 형식, **UTC** |
+| `repeatTime` | `string` | `repeat` | 반복 시각. `"HH:mm"` 형식, **UTC** (관리 콘솔에서 KST→UTC 변환 후 저장됨) |
 | `repeatWindowMs` | `number` | `repeat` | 각 회차의 유효 시간(밀리초). 이 시간이 지나면 해당 회차 미수령 처리 |
 
 > `isActive`, `expiresAt`, `createdAt`, `title`, `content`, `sender`, `rewards`, `localeContents` 등 기존 필드는 **그대로** 유지.
@@ -85,7 +85,7 @@
 3. 포함되지 않으면: 숨김
 ```
 
-**주의**: `repeatTime`은 **UTC** 기준이다. 클라이언트 로컬 시간으로 변환하지 말 것.
+**주의**: `repeatTime`과 `repeatDays`는 **UTC** 기준으로 저장된다. 관리 콘솔에서 KST 입력값을 UTC로 변환 후 저장하므로, 클라이언트는 UTC 그대로 사용하면 된다. 로컬 시간 변환 불필요.
 
 #### 의사 코드
 
@@ -189,7 +189,22 @@ function hasClaimedThisWindow(entry, windowStart):
 
 ---
 
-## 7. 필드 전체 타입 참조
+## 7. 시간대 (Timezone) 규칙
+
+| 필드 | 저장 형식 | 시간대 |
+|------|----------|--------|
+| `visibleFrom` | Firestore Timestamp | UTC (관리 콘솔이 KST 입력을 UTC Timestamp으로 변환) |
+| `repeatTime` | `"HH:mm"` 문자열 | **UTC** (관리 콘솔이 KST→UTC 변환 후 저장. 예: KST 10:00 → `"01:00"`) |
+| `repeatDays` | `string[]` | **UTC 기준 요일** (KST 자정 경계를 넘으면 요일도 시프트. 예: KST 화 02:00 → UTC 월 17:00 → `["Mon"]`) |
+| `expiresAt` | Firestore Timestamp | UTC |
+| `createdAt` | Firestore Timestamp | UTC (서버 자동) |
+| `repeatWindowMs` | `number` (ms) | 시간대 무관 (duration) |
+
+> 클라이언트는 모든 시간 필드를 **UTC 그대로** 해석하면 된다. 별도 시간대 변환 불필요.
+
+---
+
+## 8. 필드 전체 타입 참조
 
 ```typescript
 // Firestore 문서 필드 (global_mails / personal_mail_dispatches)
