@@ -22,6 +22,8 @@ export type MailLocaleEntry = {
   language: string;
   title: string;
   content: string;
+  /** 언어별 발송인 (v2). 없으면 전역 sender 폴백 */
+  sender?: string;
   fallback: boolean;
 };
 
@@ -73,4 +75,6 @@ export type PersonalListEntry = {
   repeatTime?: string;
   /** 반복 우편: 각 회차 유효 시간(ms) */
   repeatWindowMs?: number;
+  /** 반복 우편: 관리자가 선택한 회차별 만료 일수 (1 | 7 | 14 | 30) */
+  expiresAfterDays?: number;
 };

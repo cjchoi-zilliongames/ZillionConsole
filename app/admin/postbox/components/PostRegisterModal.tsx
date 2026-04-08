@@ -65,11 +65,12 @@ type LangRow = {
   language: string;
   title: string;
   content: string;
+  sender: string;
   fallback: boolean;
 };
 
-function makeLangRow(language: string, fallback: boolean): LangRow {
-  return { id: `${language}-${Math.random().toString(36).slice(2, 9)}`, language, title: "", content: "", fallback };
+function makeLangRow(language: string, fallback: boolean, seed?: { title?: string; content?: string; sender?: string }): LangRow {
+  return { id: `${language}-${Math.random().toString(36).slice(2, 9)}`, language, title: seed?.title ?? "", content: seed?.content ?? "", sender: seed?.sender ?? "", fallback };
 }
 
 function langLabel(code: string): string {
@@ -1076,9 +1077,9 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   const [scheduledAtDate, setScheduledAtDate] = useState<Date>(() => initialScheduledAtDate());
   const [repeatDays, setRepeatDays] = useState<RepeatDay[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
   const [repeatTime, setRepeatTime] = useState<string>("09:00");
-  const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("ko", true), makeLangRow("en", false)]);
+  const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("ko", true)]);
   const [langActiveId, setLangActiveId] = useState<string | null>(null);
-  const [sender, setSender] = useState("운영팀");
+  const [pendingLangAdd, setPendingLangAdd] = useState<{ code: string } | null>(null);
 
   /** 전체 | 직접 입력( users/{uid} 기준 ) */
   const [audienceMode, setAudienceMode] = useState<"all" | "specific">("all");
@@ -1175,6 +1176,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   }, [expiryPreset, customExpiryFloor]);
 
   const [submitting, setSubmitting] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitTooltip, setSubmitTooltip] = useState<{ x: number; y: number } | null>(null);
 
@@ -1236,10 +1238,67 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
   function addLangRow(code: string) {
     if (langRows.length >= MAX_MAIL_LANGS) return;
+    const fbRow = langRows.find((r) => r.fallback);
+    if (fbRow && (fbRow.title.trim() || fbRow.content.trim() || fbRow.sender.trim())) {
+      setPendingLangAdd({ code });
+      return;
+    }
     const row = makeLangRow(code, false);
     setLangRows((prev) => [...prev, row]);
     setLangActiveId(row.id);
   }
+
+  function confirmLangAdd(copyFb: boolean) {
+    if (!pendingLangAdd) return;
+    const { code } = pendingLangAdd;
+    const fbRow = langRows.find((r) => r.fallback);
+    const seed = copyFb && fbRow ? { title: fbRow.title, content: fbRow.content, sender: fbRow.sender } : undefined;
+    const row = makeLangRow(code, false, seed);
+    setLangRows((prev) => [...prev, row]);
+    setLangActiveId(row.id);
+    setPendingLangAdd(null);
+  }
+
+  // ── AI 번역 ──────────────────────────────────────────────────────────────
+  /** 현재 탭에 적힌 글만 자동 판별 → 이 탭 언어로 맞춤 */
+
+  const canRunTranslate = useMemo(() => {
+    if (!langActiveRow) return false;
+    return !!(langActiveRow.title.trim() || langActiveRow.content.trim());
+  }, [langActiveRow]);
+
+  const handleTranslate = useCallback(async () => {
+    if (!langActiveRow) return;
+    if (!langActiveRow.title.trim() && !langActiveRow.content.trim()) return;
+    setTranslating(true);
+    try {
+      const res = await authFetch("/api/admin/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceLang: "auto",
+          sourceTitle: langActiveRow.title,
+          sourceContent: langActiveRow.content,
+          sourceSender: langActiveRow.sender,
+          targetLang: langActiveRow.language,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        skipped?: boolean;
+        title?: string;
+        content?: string;
+        sender?: string;
+      };
+      if (!data.ok || data.skipped) return;
+      setLangField(langActiveRow.id, "title", data.title ?? "");
+      setLangField(langActiveRow.id, "content", (data.content ?? "").slice(0, MAX_MAIL_CONTENT));
+      if (data.sender) setLangField(langActiveRow.id, "sender", data.sender);
+    } catch {
+    } finally {
+      setTranslating(false);
+    }
+  }, [langActiveRow]);
 
   // ── 차트 관련 ─────────────────────────────────────────────────────────────
 
@@ -1360,10 +1419,12 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     }
 
     const fallbackRow = langRows.find((r) => r.fallback) ?? langRows[0]!;
+    const fallbackSender = fallbackRow.sender.trim() || "운영팀";
     const localeContents: MailLocaleEntry[] = langRows.map((r) => ({
       language: r.language,
       title: r.title.trim(),
       content: r.content,
+      sender: r.sender.trim() || "운영팀",
       fallback: r.fallback,
     }));
 
@@ -1379,6 +1440,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     let bodyRepeatDays: typeof repeatDays | undefined;
     let bodyRepeatTime: string | undefined;
     let bodyRepeatWindowMs: number | undefined;
+    let bodyExpiresAfterDays: number | undefined;
     const dm: DispatchMode = dispatchType as DispatchMode;
 
     if (dispatchType === "immediate") {
@@ -1396,6 +1458,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       bodyRepeatDays = utcDays;
       bodyRepeatTime = utcTime;
       bodyRepeatWindowMs = computeExpiresAfterMs();
+      bodyExpiresAfterDays = Number(expiryPreset) || 7;
       expiresAtIso = new Date("2099-12-31T23:59:59Z").toISOString();
     }
 
@@ -1409,7 +1472,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           title: fallbackRow.title.trim(),
           content: fallbackRow.content,
           localeContents,
-          sender: sender.trim() || "운영팀",
+          sender: fallbackSender,
           expiresAt: expiresAtIso,
           rewards: rewardEntries,
           targetAudience: audienceMode === "specific" ? "specific" : "all",
@@ -1422,6 +1485,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           repeatDays: bodyRepeatDays,
           repeatTime: bodyRepeatTime,
           repeatWindowMs: bodyRepeatWindowMs,
+          expiresAfterDays: bodyExpiresAfterDays,
         }),
       });
       const data = await res.json() as { ok: boolean; error?: string };
@@ -1435,7 +1499,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     }
   }, [
     dispatchType, scheduledAtDate, repeatDays, repeatTime,
-    langRows, sender, expiryPreset, customExpiry,
+    langRows, expiryPreset, customExpiry,
     rewards, audienceMode, pickedUsers, onCreated,
   ]);
 
@@ -1452,7 +1516,13 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       }}
     >
       <AdminGlobalLoadingOverlay
-        message={postboxChartsLoading ? ADMIN_DATA_LOADING_MESSAGE : null}
+        message={
+          translating
+            ? "번역 중…"
+            : postboxChartsLoading
+              ? ADMIN_DATA_LOADING_MESSAGE
+              : null
+        }
       />
 
       <div
@@ -1480,7 +1550,17 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           <button
             type="button"
             onClick={onClose}
-            style={{ border: "none", background: "transparent", cursor: "pointer", color: "#64748b", fontSize: 24, lineHeight: 1, padding: "0 4px" }}
+            disabled={translating}
+            style={{
+              border: "none",
+              background: "transparent",
+              cursor: translating ? "not-allowed" : "pointer",
+              color: "#64748b",
+              fontSize: 24,
+              lineHeight: 1,
+              padding: "0 4px",
+              opacity: translating ? 0.5 : 1,
+            }}
           >
             ×
           </button>
@@ -1765,6 +1845,45 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 {langActiveRow ? (
                   <>
                     <div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>발송인</label>
+                        <button
+                          type="button"
+                          onClick={() => { void handleTranslate(); }}
+                          disabled={translating || !canRunTranslate}
+                          title={
+                            !canRunTranslate
+                              ? "제목 또는 내용을 먼저 입력하세요"
+                              : `제목·내용·발송인을 ${langLabel(langActiveRow.language)}로 번역합니다`
+                          }
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "3px 8px", borderRadius: 6,
+                            border: "1px solid #e2e8f0",
+                            background: translating || !canRunTranslate ? "#f1f5f9" : "#fff",
+                            color: translating || !canRunTranslate ? "#94a3b8" : "#6366f1",
+                            fontSize: 11, fontWeight: 600, cursor: translating ? "wait" : !canRunTranslate ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.21 1.21 0 0 0 1.72 0L21.64 5.36a1.21 1.21 0 0 0 0-1.72Z" />
+                            <path d="m14 7 3 3" />
+                            <path d="M5 6v4" /><path d="M3 8h4" />
+                            <path d="M19 14v4" /><path d="M17 16h4" />
+                          </svg>
+                          AI 번역
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={langActiveRow.sender}
+                        onChange={(e) => setLangField(langActiveRow.id, "sender", e.target.value)}
+                        placeholder="운영팀"
+                        maxLength={50}
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div>
                       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 5 }}>제목</label>
                       <input
                         type="text"
@@ -1796,18 +1915,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               </div>
             </div>
           </div>
-
-          {/* 발송인 */}
-          <FormRow label="발송인">
-            <input
-              type="text"
-              value={sender}
-              onChange={(e) => setSender(e.target.value)}
-              placeholder="운영팀"
-              maxLength={50}
-              style={inputStyle}
-            />
-          </FormRow>
 
           <Divider />
 
@@ -2149,6 +2256,26 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
       {rewardDetail && (
         <RewardDetailModal reward={rewardDetail} onClose={() => setRewardDetail(null)} />
+      )}
+
+      {pendingLangAdd && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 160, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setPendingLangAdd(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", width: 340, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#0f172a", lineHeight: 1.5 }}>
+              기본 언어(FB)의 제목, 내용, 발송인을<br />새 언어에 복사하시겠습니까?
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => confirmLangAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
+              <button type="button" onClick={() => confirmLangAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {submitTooltip && submitDisabledReason && (

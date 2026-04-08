@@ -19,6 +19,8 @@ export type NoticeLocaleEntry = {
   title: string;
   content: string;
   imageKey: string;
+  /** 언어별 작성자 (v2). 없으면 전역 author 폴백 */
+  author?: string;
   fallback: boolean;
 };
 
@@ -58,6 +60,7 @@ function localeFromUnknown(raw: unknown): NoticeLocaleEntry | null {
     title: typeof o.title === "string" ? o.title : "",
     content: typeof o.content === "string" ? o.content : "",
     imageKey: typeof o.imageKey === "string" ? o.imageKey.slice(0, MAX_IMAGE_KEY) : "",
+    author: typeof o.author === "string" ? o.author : "",
     fallback: o.fallback === true,
   };
 }
@@ -145,6 +148,7 @@ type ParsedNoticeWrite = {
     title: string;
     content: string;
     imageKey: string;
+    author: string;
     fallback: boolean;
   }>;
 };
@@ -167,6 +171,8 @@ function parseNoticeWritePayload(body: unknown): { ok: false; error: string } | 
   const authorRaw = typeof b.author === "string" ? b.author.trim() : "";
   const author =
     authorRaw.length > MAX_AUTHOR ? authorRaw.slice(0, MAX_AUTHOR) : authorRaw || "운영자";
+  // FB locale의 author가 있으면 전역 author 덮어쓰기 (하위 호환)
+  // → contentsForStore 이후 fbAuthor로 재결정
 
   const postSchedule: NoticePostSchedule =
     b.postSchedule === "scheduled" ? "scheduled" : "immediate";
@@ -224,14 +230,18 @@ function parseNoticeWritePayload(body: unknown): { ok: false; error: string } | 
     title: r.title.trim(),
     content: r.content,
     imageKey: r.imageKey.trim().slice(0, MAX_IMAGE_KEY),
+    author: typeof r.author === "string" ? r.author.trim().slice(0, MAX_AUTHOR) : "",
     fallback: r.fallback,
   }));
+
+  const fbContent = contentsForStore.find((c) => c.fallback);
+  const finalAuthor = fbContent?.author || author;
 
   return {
     ok: true,
     data: {
       noticeTitle,
-      author,
+      author: finalAuthor,
       postSchedule,
       postingDate,
       postingAtDate,

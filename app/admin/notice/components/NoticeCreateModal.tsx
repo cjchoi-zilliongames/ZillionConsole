@@ -16,6 +16,7 @@ import { offset } from "@floating-ui/react";
 import "react-datepicker/dist/react-datepicker.css";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { signalNoticeChange } from "@/lib/firestore-notice-signal";
+import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import type { NoticeDoc, NoticeLocaleEntry, NoticePostSchedule } from "@/app/api/admin/notices/route";
 import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
@@ -34,16 +35,18 @@ type LocaleRow = {
   title: string;
   content: string;
   imageKey: string;
+  author: string;
   fallback: boolean;
 };
 
-function makeRow(language: string, fallback: boolean): LocaleRow {
+function makeRow(language: string, fallback: boolean, seed?: { title?: string; content?: string; author?: string }): LocaleRow {
   return {
     id: `${language}-${Math.random().toString(36).slice(2, 9)}`,
     language,
-    title: "",
-    content: "",
+    title: seed?.title ?? "",
+    content: seed?.content ?? "",
     imageKey: "",
+    author: seed?.author ?? "",
     fallback,
   };
 }
@@ -138,8 +141,9 @@ export function NoticeCreateModal({
   const [noticeName, setNoticeName] = useState("");
   const [postSchedule, setPostSchedule] = useState<NoticePostSchedule>("immediate");
   const [postingAtDate, setPostingAtDate] = useState<Date>(() => initialScheduledAtDate());
-  const [rows, setRows] = useState<LocaleRow[]>(() => [makeRow("ko", true), makeRow("en", false)]);
+  const [rows, setRows] = useState<LocaleRow[]>(() => [makeRow("ko", true)]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [pendingLangAdd, setPendingLangAdd] = useState<{ code: string } | null>(null);
 
   const activeRow = useMemo(() => {
     const first = rows[0];
@@ -152,8 +156,8 @@ export function NoticeCreateModal({
   }, [rows, activeId]);
 
   const [isPublic, setIsPublic] = useState(true);
-  const [authorName, setAuthorName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [listNewerThanOpen, setListNewerThanOpen] = useState(false);
@@ -165,18 +169,19 @@ export function NoticeCreateModal({
     const at = new Date(n.postingAt);
     setPostingAtDate(n.postSchedule === "scheduled" ? clampScheduledDate(at) : at);
     setIsPublic(n.isPublic === "y");
-    setAuthorName((n.author || "운영자").slice(0, 80));
     const ordered = orderedLocaleRowsForEdit(n.contents ?? []);
     if (ordered.length === 0) {
       setRows([makeRow("ko", true)]);
       setActiveId(null);
     } else {
+      const globalAuthor = (n.author || "운영자").slice(0, 80);
       const nextRows: LocaleRow[] = ordered.map((c, i) => ({
         id: `edit-${c.language}-${i}`,
         language: c.language,
         title: c.title,
         content: c.content,
         imageKey: c.imageKey,
+        author: (c as { author?: string }).author || globalAuthor,
         fallback: c.fallback,
       }));
       setRows(nextRows);
@@ -241,10 +246,64 @@ export function NoticeCreateModal({
 
   function addLanguage(code: string) {
     if (rows.length >= MAX_LANGS) return;
+    const fbRow = rows.find((r) => r.fallback);
+    if (fbRow && (fbRow.title.trim() || fbRow.content.trim() || fbRow.author.trim())) {
+      setPendingLangAdd({ code });
+      return;
+    }
     const row = makeRow(code, false);
     setRows((prev) => [...prev, row]);
     setActiveId(row.id);
   }
+
+  function confirmLangAdd(copyFb: boolean) {
+    if (!pendingLangAdd) return;
+    const { code } = pendingLangAdd;
+    const fbRow = rows.find((r) => r.fallback);
+    const seed = copyFb && fbRow ? { title: fbRow.title, content: fbRow.content, author: fbRow.author } : undefined;
+    const row = makeRow(code, false, seed);
+    setRows((prev) => [...prev, row]);
+    setActiveId(row.id);
+    setPendingLangAdd(null);
+  }
+
+  const canRunTranslate = useMemo(() => {
+    if (!activeRow) return false;
+    return !!(activeRow.title.trim() || activeRow.content.trim());
+  }, [activeRow]);
+
+  const handleTranslate = useCallback(async () => {
+    if (!activeRow) return;
+    if (!activeRow.title.trim() && !activeRow.content.trim()) return;
+    setTranslating(true);
+    try {
+      const res = await authFetch("/api/admin/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceLang: "auto",
+          sourceTitle: activeRow.title,
+          sourceContent: activeRow.content,
+          sourceSender: activeRow.author,
+          targetLang: activeRow.language,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        skipped?: boolean;
+        title?: string;
+        content?: string;
+        sender?: string;
+      };
+      if (!data.ok || data.skipped) return;
+      setActiveField(activeRow.id, "title", data.title ?? "");
+      setActiveField(activeRow.id, "content", (data.content ?? "").slice(0, MAX_BODY));
+      if (data.sender) setActiveField(activeRow.id, "author", data.sender);
+    } catch {
+    } finally {
+      setTranslating(false);
+    }
+  }, [activeRow]);
 
   const canSubmit = useMemo(() => {
     if (!noticeName.trim()) return false;
@@ -287,10 +346,8 @@ export function NoticeCreateModal({
     }
     const postingIso =
       postSchedule === "scheduled" ? postingAtDate.toISOString() : new Date().toISOString();
-    const author =
-      isEdit
-        ? authorName.trim() || "운영자"
-        : authorDisplay;
+    const fbRow = rows.find((r) => r.fallback) ?? rows[0];
+    const author = fbRow?.author.trim() || (isEdit ? "운영자" : authorDisplay);
 
     const payload: {
       uuid?: string;
@@ -311,6 +368,7 @@ export function NoticeCreateModal({
         title: r.title.trim(),
         content: r.content,
         imageKey: r.imageKey.trim(),
+        author: r.author.trim() || "운영자",
         fallback: r.fallback,
       })),
     };
@@ -341,7 +399,6 @@ export function NoticeCreateModal({
     postingAtDate,
     noticeName,
     authorDisplay,
-    authorName,
     isEdit,
     editNotice,
     isPublic,
@@ -364,6 +421,7 @@ export function NoticeCreateModal({
         padding: 12,
       }}
     >
+      <AdminGlobalLoadingOverlay message={translating ? "번역 중…" : null} />
       <div
         role="dialog"
         aria-modal="true"
@@ -398,17 +456,18 @@ export function NoticeCreateModal({
           </h2>
           <button
             type="button"
-            disabled={submitting}
+            disabled={submitting || translating}
             onClick={onClose}
             aria-label="닫기"
             style={{
               border: "none",
               background: "transparent",
-              cursor: submitting ? "not-allowed" : "pointer",
+              cursor: submitting || translating ? "not-allowed" : "pointer",
               color: "#64748b",
               fontSize: 24,
               lineHeight: 1,
               padding: "0 4px",
+              opacity: submitting || translating ? 0.5 : 1,
             }}
           >
             ×
@@ -505,33 +564,7 @@ export function NoticeCreateModal({
                       maxLength={200}
                     />
                   </div>
-                  <div style={{ minWidth: 0 }}>
-                    <MetaLabel>작성자</MetaLabel>
-                    {isEdit ? (
-                      <input
-                        type="text"
-                        value={authorName}
-                        onChange={(e) => setAuthorName(e.target.value.slice(0, 80))}
-                        placeholder="작성자"
-                        style={inputCompact}
-                        maxLength={80}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          padding: "6px 10px",
-                          borderRadius: 8,
-                          background: "#f8fafc",
-                          border: "1px solid #e2e8f0",
-                          fontSize: 13,
-                          color: "#334155",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {authorDisplay}
-                      </div>
-                    )}
-                  </div>
+                  
                   <div style={{ minWidth: 0 }}>
                     <MetaLabel>게시일</MetaLabel>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
@@ -730,6 +763,45 @@ export function NoticeCreateModal({
                     <div style={{ minWidth: 0, minHeight: 0, overflowY: "auto", padding: "12px 16px 16px" }}>
                       {activeRow ? (
                         <>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                            <FieldLabel style={{ marginBottom: 0 }}>작성자</FieldLabel>
+                            <button
+                              type="button"
+                              onClick={() => { void handleTranslate(); }}
+                              disabled={translating || !canRunTranslate}
+                              title={
+                                !canRunTranslate
+                                  ? "제목 또는 내용을 먼저 입력하세요"
+                                  : `제목·내용·작성자를 ${labelForLang(activeRow.language)}로 번역합니다`
+                              }
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                padding: "3px 8px", borderRadius: 6,
+                                border: "1px solid #e2e8f0",
+                                background: translating || !canRunTranslate ? "#f1f5f9" : "#fff",
+                                color: translating || !canRunTranslate ? "#94a3b8" : "#6366f1",
+                                fontSize: 11, fontWeight: 600, cursor: translating ? "wait" : !canRunTranslate ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.21 1.21 0 0 0 1.72 0L21.64 5.36a1.21 1.21 0 0 0 0-1.72Z" />
+                                <path d="m14 7 3 3" />
+                                <path d="M5 6v4" /><path d="M3 8h4" />
+                                <path d="M19 14v4" /><path d="M17 16h4" />
+                              </svg>
+                                AI 번역
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={activeRow.author}
+                            onChange={(e) => setActiveField(activeRow.id, "author", e.target.value.slice(0, 80))}
+                            placeholder="운영자"
+                            style={inputFull}
+                            maxLength={80}
+                          />
+
+                          <div style={{ height: 10 }} />
                           <FieldLabel>제목</FieldLabel>
                           <input
                             type="text"
@@ -924,6 +996,25 @@ export function NoticeCreateModal({
             </footer>
           </>
         )}
+      {pendingLangAdd && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 160, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setPendingLangAdd(null)}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", width: 340, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#0f172a", lineHeight: 1.5 }}>
+              기본 언어(FB)의 제목, 내용, 작성자를<br />새 언어에 복사하시겠습니까?
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => confirmLangAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
+              <button type="button" onClick={() => confirmLangAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

@@ -26,6 +26,7 @@
 | `repeatDays` | `string[]` | `repeat` | 반복 요일. `"Mon"` `"Tue"` `"Wed"` `"Thu"` `"Fri"` `"Sat"` `"Sun"` |
 | `repeatTime` | `string` | `repeat` | 반복 시각. `"HH:mm"` 형식, **UTC** (관리 콘솔에서 KST→UTC 변환 후 저장됨) |
 | `repeatWindowMs` | `number` | `repeat` | 각 회차의 유효 시간(밀리초). 이 시간이 지나면 해당 회차 미수령 처리 |
+| `expiresAfterDays` | `number` | `repeat` | 관리자가 선택한 회차별 만료 일수 (`1` / `7` / `14` / `30`). `repeatWindowMs`와 동일 의미의 사람 친화적 표현 |
 
 > `isActive`, `expiresAt`, `createdAt`, `title`, `content`, `sender`, `rewards`, `localeContents` 등 기존 필드는 **그대로** 유지.
 
@@ -39,6 +40,7 @@
 | `repeatDays` | `string[]` | `repeat` | 위와 동일 |
 | `repeatTime` | `string` | `repeat` | 위와 동일 |
 | `repeatWindowMs` | `number` | `repeat` | 위와 동일 |
+| `expiresAfterDays` | `number` | `repeat` | 위와 동일 |
 
 ### 2-3. `personal_mails/{uid}.global_history[]` 항목
 
@@ -106,6 +108,29 @@ function isRepeatMailVisible(mail, now):
 #### `expiresAt` 처리
 
 반복 우편의 `expiresAt`은 `2099-12-31T23:59:59Z` (센티널 값)으로 설정된다. 클라이언트는 `dispatchMode === "repeat"`이면 `expiresAt`을 **무시**하고 위 윈도우 계산으로만 판단한다.
+
+#### 반복 우편 회차별 만료 시간 — `expiresAfterDays`
+
+반복 우편은 관리자가 **상대적인 만료 기간**(1일 / 7일 / 14일 / 30일)을 선택한다. 이 값이 `expiresAfterDays` 필드로 저장된다.
+
+| 필드 | 타입 | 예시 | 설명 |
+|------|------|------|------|
+| `expiresAfterDays` | `number` | `7` | 각 회차 시작 시각으로부터 이 일수가 지나면 해당 회차 만료 |
+| `repeatWindowMs` | `number` | `604800000` | 동일 값의 밀리초 표현 (`expiresAfterDays * 86400000`) |
+
+두 필드는 동일한 의미이다. `expiresAfterDays`는 사람이 읽기 쉬운 일수, `repeatWindowMs`는 계산용 밀리초.
+
+**클라이언트 회차별 만료 계산**:
+
+```
+windowStart = 오늘(UTC) + repeatTime
+windowEnd   = windowStart + (expiresAfterDays * 86400000)
+            = windowStart + repeatWindowMs
+
+해당 회차 만료 = now >= windowEnd
+```
+
+> `expiresAfterDays`가 없는 구 데이터는 `repeatWindowMs / 86400000`로 일수를 역산하거나, `repeatWindowMs` 그대로 사용.
 
 ---
 
@@ -204,7 +229,40 @@ function hasClaimedThisWindow(entry, windowStart):
 
 ---
 
-## 8. 필드 전체 타입 참조
+## 8. 언어별 발송인(sender) — v3 변경
+
+### 변경 의도
+
+기존에는 우편 문서에 전역 `sender` 필드 하나만 있었다. 다국어 우편에서 발송인도 언어별로 다르게 표시해야 하므로, `localeContents[]` 배열 안에 `sender` 필드를 추가했다. 전역 `sender`는 하위 호환용으로 유지한다.
+
+### 우편 (global_mails / personal_mail_dispatches)
+
+| 위치 | 필드 | 타입 | 설명 |
+|------|------|------|------|
+| `localeContents[]` | `sender` | `string` | **NEW (v3)** — 해당 언어의 발송인. 예: `"운영팀"` (ko), `"Operations"` (en) |
+| 문서 루트 | `sender` | `string` | 하위 호환용. FB 언어의 sender와 동일 값. 새 필드가 없는 구 데이터에서 폴백 |
+
+**클라이언트 발송인 결정 우선순위**:
+1. 유저 언어에 매칭되는 `localeContents[]` 항목의 `sender` 사용
+2. 매칭 항목 없거나 `sender`가 빈 문자열이면 → `fallback: true` 항목의 `sender`
+3. 그래도 없으면 → 문서 루트의 전역 `sender` 필드
+
+### personal_list[] 항목
+
+`PersonalListEntry.localeContents[].sender` 동일 적용. 전역 `PersonalListEntry.sender`도 하위 호환용으로 유지.
+
+### 공지 (notices)
+
+| 위치 | 필드 | 타입 | 설명 |
+|------|------|------|------|
+| `contents[]` | `author` | `string` | **NEW (v3)** — 해당 언어의 작성자 |
+| 문서 루트 | `author` | `string` | 하위 호환용. FB 언어의 author와 동일 값 |
+
+클라이언트 결정 우선순위: 우편의 `sender`와 동일 패턴.
+
+---
+
+## 9. 필드 전체 타입 참조
 
 ```typescript
 // Firestore 문서 필드 (global_mails / personal_mail_dispatches)
@@ -220,7 +278,13 @@ interface MailDocument {
   createdAt: Timestamp;
   expiresAt: Timestamp;
   rewards: { table: string; row: string; count: number; rowValues?: Record<string, string> }[];
-  localeContents?: { language: string; title: string; content: string; fallback: boolean }[];
+  localeContents?: {
+    language: string;
+    title: string;
+    content: string;
+    sender?: string;       // v3: 언어별 발송인
+    fallback: boolean;
+  }[];
 
   // v2 추가 필드
   dispatchMode?: DispatchMode;       // 없으면 "immediate"
@@ -228,6 +292,7 @@ interface MailDocument {
   repeatDays?: RepeatDay[];          // repeat
   repeatTime?: string;               // repeat, "HH:mm" UTC
   repeatWindowMs?: number;           // repeat, ms
+  expiresAfterDays?: number;         // repeat, 관리자 선택 일수 (1/7/14/30)
 }
 
 // personal_list[] 항목
@@ -237,8 +302,14 @@ interface PersonalListEntry {
   content: string;
   rewards: { table: string; row: string; count: number; rowValues?: Record<string, string> }[];
   expiresAt: Timestamp;
-  sender: string;
-  localeContents?: { language: string; title: string; content: string; fallback: boolean }[];
+  sender: string;                    // 하위 호환용 (FB sender)
+  localeContents?: {
+    language: string;
+    title: string;
+    content: string;
+    sender?: string;       // v3: 언어별 발송인
+    fallback: boolean;
+  }[];
   claimedAt?: Timestamp;
   isClaimed?: boolean;
   dismissedAt?: Timestamp;
@@ -248,6 +319,7 @@ interface PersonalListEntry {
   repeatDays?: RepeatDay[];
   repeatTime?: string;
   repeatWindowMs?: number;
+  expiresAfterDays?: number;         // 관리자 선택 일수 (1/7/14/30)
 }
 
 // global_history[] 항목

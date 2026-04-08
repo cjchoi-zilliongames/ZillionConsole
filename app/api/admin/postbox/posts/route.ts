@@ -69,6 +69,8 @@ export type PostDoc = {
   repeatTime?: string;
   /** 반복 우편: 각 회차 유효 시간(ms) */
   repeatWindowMs?: number;
+  /** 반복 우편: 관리자가 선택한 회차별 만료 일수 (1 | 7 | 14 | 30) */
+  expiresAfterDays?: number;
 };
 
 const MAX_ROW_VALUE_KEY_LEN = 256;
@@ -176,6 +178,7 @@ function localeContentsFromDoc(raw: unknown): MailLocaleEntry[] {
       language: o.language,
       title: typeof o.title === "string" ? o.title : "",
       content: typeof o.content === "string" ? o.content : "",
+      sender: typeof o.sender === "string" ? o.sender : "",
       fallback: o.fallback === true,
     }];
   });
@@ -221,6 +224,7 @@ function dispatchExtras(d: DocumentData) {
     ...(Array.isArray(d.repeatDays) ? { repeatDays: d.repeatDays as RepeatDay[] } : {}),
     ...(typeof d.repeatTime === "string" ? { repeatTime: d.repeatTime } : {}),
     ...(typeof d.repeatWindowMs === "number" ? { repeatWindowMs: d.repeatWindowMs } : {}),
+    ...(typeof d.expiresAfterDays === "number" ? { expiresAfterDays: d.expiresAfterDays } : {}),
   };
 }
 
@@ -576,6 +580,7 @@ export async function POST(req: Request) {
       repeatDays?: RepeatDay[];
       repeatTime?: string;
       repeatWindowMs?: number;
+      expiresAfterDays?: number;
     };
 
     const { postType, title, content, sender, expiresAt } = body;
@@ -590,6 +595,7 @@ export async function POST(req: Request) {
         language: e.language.trim(),
         title: String(e.title ?? "").trim(),
         content: String(e.content ?? ""),
+        sender: typeof e.sender === "string" ? e.sender.trim() : "",
         fallback: e.fallback === true,
       }));
     if (localeContents.length > 0 && !localeContents.some((e) => e.fallback)) {
@@ -613,7 +619,8 @@ export async function POST(req: Request) {
       ? body.rewards.map((r) => rewardEntryFromInput(r)).filter((r): r is RewardEntry => r != null)
       : [];
     const storedRewards = rewardsToStored(rewards);
-    const senderStr = sender || "운영팀";
+    const fbLocale = localeContents.find((e) => e.fallback);
+    const senderStr = fbLocale?.sender || sender || "운영팀";
 
     if (dispatchMode === "scheduled") {
       if (!body.visibleFrom) {
@@ -646,6 +653,7 @@ export async function POST(req: Request) {
         if (body.repeatDays) f.repeatDays = body.repeatDays;
         if (body.repeatTime) f.repeatTime = body.repeatTime;
         if (repeatWindowMs != null) f.repeatWindowMs = repeatWindowMs;
+        if (typeof body.expiresAfterDays === "number") f.expiresAfterDays = body.expiresAfterDays;
       }
       return f;
     }
@@ -713,6 +721,7 @@ export async function POST(req: Request) {
       ...(dispatchMode === "repeat" && body.repeatDays ? { repeatDays: body.repeatDays } : {}),
       ...(dispatchMode === "repeat" && body.repeatTime ? { repeatTime: body.repeatTime } : {}),
       ...(dispatchMode === "repeat" && repeatWindowMs != null ? { repeatWindowMs } : {}),
+      ...(dispatchMode === "repeat" && typeof body.expiresAfterDays === "number" ? { expiresAfterDays: body.expiresAfterDays } : {}),
     };
     await writePersonalListBatch(db, uids, listEntry);
 
