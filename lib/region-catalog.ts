@@ -61,21 +61,63 @@ export const REGION_COUNTRY_OPTIONS: readonly { code: string; label: string }[] 
   (e) => e.code !== REGION_GLOBAL,
 ).map((e) => ({ code: e.code, label: `${e.flag} ${e.label} (${e.code})` }));
 
-/** 번역 대상 언어 (기존 translate API LANG_NAMES 와 동일 집합) */
+/** 번역 대상 언어 (API `targetLang` 코드 — UI 라벨은 한국어 안내) */
 export const TRANSLATE_LANG_OPTIONS: readonly { code: string; label: string }[] = [
   { code: "ko", label: "한국어" },
-  { code: "en", label: "English" },
-  { code: "ja", label: "日本語" },
-  { code: "zh", label: "中文(간체)" },
-  { code: "zh-TW", label: "繁體中文" },
-  { code: "th", label: "ไทย" },
-  { code: "vi", label: "Tiếng Việt" },
-  { code: "id", label: "Indonesia" },
-  { code: "es", label: "Español" },
-  { code: "pt", label: "Português" },
-  { code: "de", label: "Deutsch" },
-  { code: "fr", label: "Français" },
+  { code: "en", label: "영어" },
+  { code: "ja", label: "일본어" },
+  { code: "zh", label: "중국어(간체)" },
+  { code: "zh-TW", label: "중국어(번체)" },
+  { code: "th", label: "태국어" },
+  { code: "vi", label: "베트남어" },
+  { code: "id", label: "인도네시아어" },
+  { code: "es", label: "스페인어" },
+  { code: "pt", label: "포르투갈어" },
+  { code: "de", label: "독일어" },
+  { code: "fr", label: "프랑스어" },
 ] as const;
+
+const TRANSLATE_LANG_CODES = new Set(TRANSLATE_LANG_OPTIONS.map((o) => o.code));
+
+/**
+ * 지역 탭 기준 번역 모달 기본 `targetLang` 추천.
+ * - 기본(GLOBAL) → 영어
+ * - 매핑 없음 → 목록 첫 항목(한국어) 유지
+ */
+export function recommendTranslateLangForRegion(regionCodeRaw: string): string {
+  const r = normalizeRegionCode(regionCodeRaw);
+  if (r === REGION_GLOBAL) return "en";
+
+  const byRegion: Record<string, string> = {
+    KR: "ko",
+    JP: "ja",
+    US: "en",
+    GB: "en",
+    AU: "en",
+    CA: "en",
+    SG: "en",
+    PH: "en",
+    MY: "en",
+    TW: "zh-TW",
+    HK: "zh-TW",
+    CN: "zh",
+    TH: "th",
+    VN: "vi",
+    ID: "id",
+    DE: "de",
+    FR: "fr",
+    ES: "es",
+    IT: "it",
+    BR: "pt",
+    MX: "es",
+  };
+
+  const rec = byRegion[r];
+  if (!rec || !TRANSLATE_LANG_CODES.has(rec)) {
+    return TRANSLATE_LANG_OPTIONS[0]!.code;
+  }
+  return rec;
+}
 
 export function normalizeRegionCode(raw: string): string {
   return raw.trim().toUpperCase();

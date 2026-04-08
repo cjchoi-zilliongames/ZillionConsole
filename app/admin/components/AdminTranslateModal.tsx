@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
-import { TRANSLATE_LANG_OPTIONS } from "@/lib/region-catalog";
+import { TRANSLATE_LANG_OPTIONS, recommendTranslateLangForRegion } from "@/lib/region-catalog";
 
 type Props = {
   /** API 맥락용 — 현재 편집 중인 지역 탭 */
@@ -20,7 +20,7 @@ export function AdminTranslateModal({
   getFields,
   onApply,
 }: Props) {
-  const [targetLang, setTargetLang] = useState<string>(TRANSLATE_LANG_OPTIONS[0]!.code);
+  const [targetLang, setTargetLang] = useState<string>(() => recommendTranslateLangForRegion(regionCode));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [skipMsg, setSkipMsg] = useState<string | null>(null);
