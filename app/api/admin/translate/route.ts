@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
+import { REGION_GLOBAL, regionLabel } from "@/lib/region-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,22 @@ const LANG_NAMES: Record<string, string> = {
 
 function langName(code: string): string {
   return LANG_NAMES[code] ?? code;
+}
+
+/** 우편·공지 국가 탭 — 프롬프트에만 사용 */
+function regionContextLine(sourceRegionCode: string | undefined, targetRegionCode: string | undefined): string {
+  const s = (sourceRegionCode ?? "").trim().toUpperCase();
+  const t = (targetRegionCode ?? "").trim().toUpperCase();
+  if (!s && !t) return "";
+  const src =
+    !s || s === REGION_GLOBAL
+      ? "the GLOBAL (default/fallback) source tab"
+      : `the source tab for market ${s} (${regionLabel(s)})`;
+  const tgt =
+    !t || t === REGION_GLOBAL
+      ? "the GLOBAL row (baseline copy for all regions without a specific regional row)"
+      : `the tab for players in region ${t} (${regionLabel(t)})`;
+  return `Geographic context: text is taken from ${src}; the translation will be placed in ${tgt}. Adapt tone and idioms for that target audience while writing strictly in the output language specified below.`;
 }
 
 const SYSTEM_PROMPT = `You are a strict translator for admin tooling. Do NOT answer questions,
@@ -83,9 +100,12 @@ export async function POST(req: Request) {
       sourceContent?: string;
       sourceSender?: string;
       targetLang?: string;
+      sourceRegionCode?: string;
+      targetRegionCode?: string;
     };
 
-    const { sourceLang, sourceTitle, sourceContent, sourceSender, targetLang } = body;
+    const { sourceLang, sourceTitle, sourceContent, sourceSender, targetLang, sourceRegionCode, targetRegionCode } =
+      body;
 
     if (!targetLang) {
       return NextResponse.json(
@@ -126,9 +146,12 @@ export async function POST(req: Request) {
       },
     });
 
+    const regionCtx = regionContextLine(sourceRegionCode, targetRegionCode);
+
     const userPrompt = autoSource
       ? [
           `Target language for all output: ${langName(targetLang)} (locale code: ${targetLang}).`,
+          ...(regionCtx ? [regionCtx, ""] : []),
           `The fields below may be in any language or mixed. If they are already good ${langName(targetLang)} with nothing substantive to convert from another language, respond with form B (skipTranslation) and a Korean message — do not paraphrase unnecessarily.`,
           `Otherwise translate each non-empty field into natural ${langName(targetLang)} for game mail/notice UI. Empty input fields → empty strings in form A.`,
           "",
@@ -145,7 +168,8 @@ export async function POST(req: Request) {
           "</source_sender>",
         ].join("\n")
       : [
-          `Translate from ${langName(sourceLang)} to ${langName(targetLang)}.`,
+          `Translate from ${langName(sourceLang ?? "")} to ${langName(targetLang)}.`,
+          ...(regionCtx ? [regionCtx, ""] : []),
           `If the source is already appropriate ${langName(targetLang)} or there is nothing to translate, use form B with skipTranslation and a Korean message.`,
           "",
           "<source_title>",

@@ -17,8 +17,9 @@ import { ko } from "date-fns/locale";
 import { offset } from "@floating-ui/react";
 import "react-datepicker/dist/react-datepicker.css";
 import type { RewardEntry } from "@/app/api/admin/postbox/posts/route";
-import type { MailLocaleEntry } from "@/lib/firestore-mail-schema";
-import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
+import type { MailRegionEntry } from "@/lib/firestore-mail-schema";
+import { REGION_GLOBAL, REGION_COUNTRY_OPTIONS, regionLabel } from "@/lib/region-catalog";
+import { AdminTranslateModal } from "@/app/admin/components/AdminTranslateModal";
 import type { PostboxChartInfo } from "@/app/api/storage/chart-postbox-flags/route";
 import { parseCsv } from "@/lib/spec/csv-parser";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
@@ -57,24 +58,25 @@ const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 type ExpiryPreset = "1" | "7" | "14" | "30" | "custom";
 
-const MAX_MAIL_LANGS = 10;
+const MAX_MAIL_REGIONS = 10;
 const MAX_MAIL_CONTENT = 500;
 
-type LangRow = {
+type RegionRow = {
   id: string;
-  language: string;
+  regionCode: string;
   title: string;
   content: string;
   sender: string;
-  fallback: boolean;
 };
 
-function makeLangRow(language: string, fallback: boolean, seed?: { title?: string; content?: string; sender?: string }): LangRow {
-  return { id: `${language}-${Math.random().toString(36).slice(2, 9)}`, language, title: seed?.title ?? "", content: seed?.content ?? "", sender: seed?.sender ?? "", fallback };
-}
-
-function langLabel(code: string): string {
-  return NOTICE_LANG_CATALOG.find((l) => l.code === code)?.label ?? code;
+function makeRegionRow(regionCode: string, seed?: { title?: string; content?: string; sender?: string }): RegionRow {
+  return {
+    id: `${regionCode}-${Math.random().toString(36).slice(2, 9)}`,
+    regionCode,
+    title: seed?.title ?? "",
+    content: seed?.content ?? "",
+    sender: seed?.sender ?? "",
+  };
 }
 
 type Props = {
@@ -1077,9 +1079,10 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   const [scheduledAtDate, setScheduledAtDate] = useState<Date>(() => initialScheduledAtDate());
   const [repeatDays, setRepeatDays] = useState<RepeatDay[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
   const [repeatTime, setRepeatTime] = useState<string>("09:00");
-  const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("en", true)]);
-  const [langActiveId, setLangActiveId] = useState<string | null>(null);
-  const [pendingLangAdd, setPendingLangAdd] = useState<{ code: string } | null>(null);
+  const [regionRows, setRegionRows] = useState<RegionRow[]>(() => [makeRegionRow(REGION_GLOBAL)]);
+  const [regionActiveId, setRegionActiveId] = useState<string | null>(null);
+  const [pendingRegionAdd, setPendingRegionAdd] = useState<{ code: string } | null>(null);
+  const [translateTarget, setTranslateTarget] = useState<{ rowId: string; regionCode: string } | null>(null);
 
   /** 전체 | 직접 입력( users/{uid} 기준 ) */
   const [audienceMode, setAudienceMode] = useState<"all" | "specific">("all");
@@ -1176,17 +1179,16 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   }, [expiryPreset, customExpiryFloor]);
 
   const [submitting, setSubmitting] = useState(false);
-  const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitTooltip, setSubmitTooltip] = useState<{ x: number; y: number } | null>(null);
 
-  const hasValidLang = langRows.some((r) => r.title.trim() && r.content.trim());
-  const hasIncompleteLang = langRows.some((r) => !r.title.trim() || !r.content.trim());
+  const hasValidRegion = regionRows.some((r) => r.title.trim() && r.content.trim());
+  const hasIncompleteRegion = regionRows.some((r) => !r.title.trim() || !r.content.trim());
   const submitDisabledReason: string | null =
-    !hasValidLang
-      ? "최소 하나의 언어에 제목과 내용을 입력해 주세요."
-      : hasIncompleteLang
-      ? "모든 언어에 제목과 내용을 입력해 주세요."
+    !hasValidRegion
+      ? "최소 하나의 지역에 제목과 내용을 입력해 주세요."
+      : hasIncompleteRegion
+      ? "모든 지역에 제목과 내용을 입력해 주세요."
       : null;
 
   function addPickedUser(u: PickedUser) {
@@ -1202,103 +1204,78 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
   // ── 언어 관련 파생 & 헬퍼 ───────────────────────────────────────────────────
 
-  const langActiveRow = useMemo(() => {
-    const first = langRows[0];
+  const regionActiveRow = useMemo(() => {
+    const first = regionRows[0];
     if (!first) return null;
-    if (langActiveId) {
-      const found = langRows.find((r) => r.id === langActiveId);
+    if (regionActiveId) {
+      const found = regionRows.find((r) => r.id === regionActiveId);
       if (found) return found;
     }
     return first;
-  }, [langRows, langActiveId]);
+  }, [regionRows, regionActiveId]);
 
-  const addableLangs = useMemo(
-    () => NOTICE_LANG_CATALOG.filter((l) => !langRows.some((r) => r.language === l.code)),
-    [langRows],
+  const addableRegions = useMemo(
+    () => REGION_COUNTRY_OPTIONS.filter((l) => !regionRows.some((r) => r.regionCode === l.code)),
+    [regionRows],
   );
 
-  function setLangField<K extends keyof LangRow>(id: string, key: K, value: LangRow[K]) {
-    setLangRows((prev) => prev.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
+  function setRegionField<K extends keyof RegionRow>(id: string, key: K, value: RegionRow[K]) {
+    setRegionRows((prev) => prev.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
   }
 
-  function setLangFallback(id: string) {
-    setLangRows((prev) => prev.map((r) => ({ ...r, fallback: r.id === id })));
-  }
-
-  function removeLangRow(id: string) {
-    setLangRows((prev) => {
+  function removeRegionRow(id: string) {
+    setRegionRows((prev) => {
       if (prev.length <= 1) return prev;
+      if (prev[0]!.id === id) return prev;
       const next = prev.filter((r) => r.id !== id);
-      const removed = prev.find((r) => r.id === id);
-      if (removed?.fallback && next.length > 0) next[0] = { ...next[0]!, fallback: true };
-      if (langActiveId === id) setLangActiveId(next[0]?.id ?? null);
+      if (regionActiveId === id) setRegionActiveId(next[0]?.id ?? null);
       return next;
     });
   }
 
-  function addLangRow(code: string) {
-    if (langRows.length >= MAX_MAIL_LANGS) return;
-    const fbRow = langRows.find((r) => r.fallback);
-    if (fbRow && (fbRow.title.trim() || fbRow.content.trim() || fbRow.sender.trim())) {
-      setPendingLangAdd({ code });
+  function addRegionRow(code: string) {
+    if (regionRows.length >= MAX_MAIL_REGIONS) return;
+    const globalRow = regionRows[0];
+    if (globalRow && (globalRow.title.trim() || globalRow.content.trim() || globalRow.sender.trim())) {
+      setPendingRegionAdd({ code });
       return;
     }
-    const row = makeLangRow(code, false);
-    setLangRows((prev) => [...prev, row]);
-    setLangActiveId(row.id);
+    const row = makeRegionRow(code);
+    setRegionRows((prev) => [...prev, row]);
+    setRegionActiveId(row.id);
   }
 
-  function confirmLangAdd(copyFb: boolean) {
-    if (!pendingLangAdd) return;
-    const { code } = pendingLangAdd;
-    const fbRow = langRows.find((r) => r.fallback);
-    const seed = copyFb && fbRow ? { title: fbRow.title, content: fbRow.content, sender: fbRow.sender } : undefined;
-    const row = makeLangRow(code, false, seed);
-    setLangRows((prev) => [...prev, row]);
-    setLangActiveId(row.id);
-    setPendingLangAdd(null);
+  function confirmRegionAdd(copyGlobal: boolean) {
+    if (!pendingRegionAdd) return;
+    const { code } = pendingRegionAdd;
+    const globalRow = regionRows[0];
+    const seed = copyGlobal && globalRow ? { title: globalRow.title, content: globalRow.content, sender: globalRow.sender } : undefined;
+    const row = makeRegionRow(code, seed);
+    setRegionRows((prev) => [...prev, row]);
+    setRegionActiveId(row.id);
+    setPendingRegionAdd(null);
   }
 
-  // ── AI 번역 ──────────────────────────────────────────────────────────────
-  /** 현재 탭에 적힌 글만 자동 판별 → 이 탭 언어로 맞춤 */
+  const getOpenTranslateFields = useCallback(() => {
+    if (!translateTarget) return { title: "", content: "", third: "" };
+    const r = regionRows.find((x) => x.id === translateTarget.rowId);
+    return {
+      title: r?.title ?? "",
+      content: r?.content ?? "",
+      third: r?.sender ?? "",
+    };
+  }, [translateTarget, regionRows]);
 
-  const canRunTranslate = useMemo(() => {
-    if (!langActiveRow) return false;
-    return !!(langActiveRow.title.trim() || langActiveRow.content.trim());
-  }, [langActiveRow]);
-
-  const handleTranslate = useCallback(async () => {
-    if (!langActiveRow) return;
-    if (!langActiveRow.title.trim() && !langActiveRow.content.trim()) return;
-    setTranslating(true);
-    try {
-      const res = await authFetch("/api/admin/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceLang: "auto",
-          sourceTitle: langActiveRow.title,
-          sourceContent: langActiveRow.content,
-          sourceSender: langActiveRow.sender,
-          targetLang: langActiveRow.language,
-        }),
-      });
-      const data = (await res.json()) as {
-        ok: boolean;
-        skipped?: boolean;
-        title?: string;
-        content?: string;
-        sender?: string;
-      };
-      if (!data.ok || data.skipped) return;
-      setLangField(langActiveRow.id, "title", data.title ?? "");
-      setLangField(langActiveRow.id, "content", (data.content ?? "").slice(0, MAX_MAIL_CONTENT));
-      if (data.sender) setLangField(langActiveRow.id, "sender", data.sender);
-    } catch {
-    } finally {
-      setTranslating(false);
-    }
-  }, [langActiveRow]);
+  const applyOpenTranslate = useCallback(
+    (fields: { title: string; content: string; third: string }) => {
+      if (!translateTarget) return;
+      const id = translateTarget.rowId;
+      setRegionRows((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, title: fields.title, content: fields.content, sender: fields.third } : r)),
+      );
+    },
+    [translateTarget],
+  );
 
   // ── 차트 관련 ─────────────────────────────────────────────────────────────
 
@@ -1418,14 +1395,14 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       return;
     }
 
-    const fallbackRow = langRows.find((r) => r.fallback) ?? langRows[0]!;
+    const fallbackRow = regionRows[0]!;
     const fallbackSender = fallbackRow.sender.trim() || "운영팀";
-    const localeContents: MailLocaleEntry[] = langRows.map((r) => ({
-      language: r.language,
+    const regionContents: MailRegionEntry[] = regionRows.map((r, i) => ({
+      regionCode: r.regionCode,
       title: r.title.trim(),
       content: r.content,
       sender: r.sender.trim() || "운영팀",
-      fallback: r.fallback,
+      fallback: i === 0,
     }));
 
     const rewardEntries: RewardEntry[] = rewards.map((r) => ({
@@ -1471,7 +1448,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           postType: "Admin",
           title: fallbackRow.title.trim(),
           content: fallbackRow.content,
-          localeContents,
+          regionContents,
           sender: fallbackSender,
           expiresAt: expiresAtIso,
           rewards: rewardEntries,
@@ -1499,7 +1476,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     }
   }, [
     dispatchType, scheduledAtDate, repeatDays, repeatTime,
-    langRows, expiryPreset, customExpiry,
+    regionRows, expiryPreset, customExpiry,
     rewards, audienceMode, pickedUsers, onCreated,
   ]);
 
@@ -1515,15 +1492,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         padding: "24px 16px",
       }}
     >
-      <AdminGlobalLoadingOverlay
-        message={
-          translating
-            ? "번역 중…"
-            : postboxChartsLoading
-              ? ADMIN_DATA_LOADING_MESSAGE
-              : null
-        }
-      />
+      <AdminGlobalLoadingOverlay message={postboxChartsLoading ? ADMIN_DATA_LOADING_MESSAGE : null} />
 
       <div
         style={{
@@ -1542,6 +1511,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            gap: 12,
             padding: "20px 24px 16px",
             borderBottom: "1px solid #f1f5f9",
           }}
@@ -1550,16 +1520,14 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
           <button
             type="button"
             onClick={onClose}
-            disabled={translating}
             style={{
               border: "none",
               background: "transparent",
-              cursor: translating ? "not-allowed" : "pointer",
+              cursor: "pointer",
               color: "#64748b",
               fontSize: 24,
               lineHeight: 1,
               padding: "0 4px",
-              opacity: translating ? 0.5 : 1,
             }}
           >
             ×
@@ -1754,7 +1722,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
               columnGap: 20,
               height: 370,
             }}>
-              {/* 언어 사이드바 */}
+              {/* 국가·지역 사이드바 */}
               <div style={{
                 borderRight: "1px solid #f1f5f9",
                 background: "#fafbfc",
@@ -1768,16 +1736,16 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                   fontSize: 11, fontWeight: 700, color: "#64748b",
                   flexShrink: 0,
                 }}>
-                  <span>언어 ({langRows.length}/{MAX_MAIL_LANGS})</span>
+                  <span>국가·지역 ({regionRows.length}/{MAX_MAIL_REGIONS})</span>
                 </div>
                 <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px" }}>
-                  {langRows.map((r) => {
-                    const active = langActiveRow?.id === r.id;
+                  {regionRows.map((r) => {
+                    const active = regionActiveRow?.id === r.id;
                     return (
                       <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 5 }}>
                         <button
                           type="button"
-                          onClick={() => setLangActiveId(r.id)}
+                          onClick={() => setRegionActiveId(r.id)}
                           style={{
                             flex: 1, textAlign: "left", padding: "7px 9px", borderRadius: 9,
                             border: active ? "2px solid #2563eb" : "2px solid #e2e8f0",
@@ -1786,31 +1754,17 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                             color: active ? "#1d4ed8" : "#334155",
                           }}
                         >
-                          {langLabel(r.language)}
+                          {regionLabel(r.regionCode)}
                         </button>
                         <button
                           type="button"
-                          title="대표 언어로 지정"
-                          onClick={() => setLangFallback(r.id)}
-                          style={{
-                            padding: "4px 6px", fontSize: 10, fontWeight: 700, borderRadius: 7,
-                            border: r.fallback ? "1px solid #2563eb" : "1px solid #e2e8f0",
-                            background: r.fallback ? "#dbeafe" : "#fff",
-                            color: r.fallback ? "#1d4ed8" : "#64748b",
-                            cursor: "pointer",
-                          }}
-                        >
-                          FB
-                        </button>
-                        <button
-                          type="button"
-                          title="언어 제거"
-                          disabled={langRows.length <= 1}
-                          onClick={() => removeLangRow(r.id)}
+                          title="지역 제거"
+                          disabled={regionRows.length <= 1 || r.id === regionRows[0]?.id}
+                          onClick={() => removeRegionRow(r.id)}
                           style={{
                             padding: 4, border: "none", background: "transparent",
-                            color: langRows.length <= 1 ? "#e2e8f0" : "#94a3b8",
-                            cursor: langRows.length <= 1 ? "not-allowed" : "pointer",
+                            color: regionRows.length <= 1 || r.id === regionRows[0]?.id ? "#e2e8f0" : "#94a3b8",
+                            cursor: regionRows.length <= 1 || r.id === regionRows[0]?.id ? "not-allowed" : "pointer",
                           }}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1824,16 +1778,16 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 <div style={{ padding: "0 8px 10px", flexShrink: 0 }}>
                   <select
                     value=""
-                    onChange={(e) => { if (e.target.value) addLangRow(e.target.value); e.target.value = ""; }}
-                    disabled={addableLangs.length === 0 || langRows.length >= MAX_MAIL_LANGS}
+                    onChange={(e) => { if (e.target.value) addRegionRow(e.target.value); e.target.value = ""; }}
+                    disabled={addableRegions.length === 0 || regionRows.length >= MAX_MAIL_REGIONS}
                     style={{
                       width: "100%", padding: "7px 9px", borderRadius: 9,
                       border: "1px solid #e2e8f0", background: "#fff",
-                      fontSize: 12, color: addableLangs.length === 0 ? "#94a3b8" : "#334155",
+                      fontSize: 12, color: addableRegions.length === 0 ? "#94a3b8" : "#334155",
                     }}
                   >
-                    <option value="">언어 추가</option>
-                    {addableLangs.map((l) => (
+                    <option value="">국가 추가</option>
+                    {addableRegions.map((l) => (
                       <option key={l.code} value={l.code}>{l.label}</option>
                     ))}
                   </select>
@@ -1842,42 +1796,65 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
               {/* 제목·내용 에디터 */}
               <div style={{ display: "flex", flexDirection: "column", overflow: "auto", padding: "12px 14px", gap: 10 }}>
-                {langActiveRow ? (
+                {regionActiveRow ? (
                   <>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-                        <label style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>발송인</label>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: "#334155", margin: 0 }}>발송인</label>
                         <button
                           type="button"
-                          onClick={() => { void handleTranslate(); }}
-                          disabled={translating || !canRunTranslate}
+                          onClick={() => {
+                            if (!regionActiveRow) return;
+                            setTranslateTarget({ rowId: regionActiveRow.id, regionCode: regionActiveRow.regionCode });
+                          }}
+                          disabled={
+                            !regionActiveRow || !(regionActiveRow.title.trim() || regionActiveRow.content.trim())
+                          }
                           title={
-                            !canRunTranslate
-                              ? "제목 또는 내용을 먼저 입력하세요"
-                              : `제목·내용·발송인을 ${langLabel(langActiveRow.language)}로 번역합니다`
+                            !regionActiveRow
+                              ? undefined
+                              : !regionActiveRow.title.trim() && !regionActiveRow.content.trim()
+                                ? "제목 또는 내용을 먼저 입력하세요"
+                                : undefined
                           }
                           style={{
-                            display: "inline-flex", alignItems: "center", gap: 4,
-                            padding: "3px 8px", borderRadius: 6,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            padding: "3px 8px",
+                            borderRadius: 6,
                             border: "1px solid #e2e8f0",
-                            background: translating || !canRunTranslate ? "#f1f5f9" : "#fff",
-                            color: translating || !canRunTranslate ? "#94a3b8" : "#6366f1",
-                            fontSize: 11, fontWeight: 600, cursor: translating ? "wait" : !canRunTranslate ? "not-allowed" : "pointer",
+                            background:
+                              !regionActiveRow || !(regionActiveRow.title.trim() || regionActiveRow.content.trim())
+                                ? "#f1f5f9"
+                                : "#fff",
+                            color:
+                              !regionActiveRow || !(regionActiveRow.title.trim() || regionActiveRow.content.trim())
+                                ? "#94a3b8"
+                                : "#6366f1",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor:
+                              !regionActiveRow || !(regionActiveRow.title.trim() || regionActiveRow.content.trim())
+                                ? "not-allowed"
+                                : "pointer",
                           }}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.21 1.21 0 0 0 1.72 0L21.64 5.36a1.21 1.21 0 0 0 0-1.72Z" />
                             <path d="m14 7 3 3" />
-                            <path d="M5 6v4" /><path d="M3 8h4" />
-                            <path d="M19 14v4" /><path d="M17 16h4" />
+                            <path d="M5 6v4" />
+                            <path d="M3 8h4" />
+                            <path d="M19 14v4" />
+                            <path d="M17 16h4" />
                           </svg>
                           AI 번역
                         </button>
                       </div>
                       <input
                         type="text"
-                        value={langActiveRow.sender}
-                        onChange={(e) => setLangField(langActiveRow.id, "sender", e.target.value)}
+                        value={regionActiveRow.sender}
+                        onChange={(e) => setRegionField(regionActiveRow.id, "sender", e.target.value)}
                         placeholder="운영팀"
                         maxLength={50}
                         style={inputStyle}
@@ -1887,8 +1864,8 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 5 }}>제목</label>
                       <input
                         type="text"
-                        value={langActiveRow.title}
-                        onChange={(e) => setLangField(langActiveRow.id, "title", e.target.value)}
+                        value={regionActiveRow.title}
+                        onChange={(e) => setRegionField(regionActiveRow.id, "title", e.target.value)}
                         placeholder="우편 제목을 입력하세요"
                         maxLength={100}
                         style={inputStyle}
@@ -1898,19 +1875,19 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                         <label style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>내용</label>
                         <span style={{ fontSize: 11, color: "#94a3b8", fontVariantNumeric: "tabular-nums" }}>
-                          {langActiveRow.content.length} / {MAX_MAIL_CONTENT}
+                          {regionActiveRow.content.length} / {MAX_MAIL_CONTENT}
                         </span>
                       </div>
                       <textarea
-                        value={langActiveRow.content}
-                        onChange={(e) => setLangField(langActiveRow.id, "content", e.target.value.slice(0, MAX_MAIL_CONTENT))}
+                        value={regionActiveRow.content}
+                        onChange={(e) => setRegionField(regionActiveRow.id, "content", e.target.value.slice(0, MAX_MAIL_CONTENT))}
                         placeholder="우편 내용을 입력하세요"
                         style={{ ...inputStyle, resize: "none", flex: 1, lineHeight: 1.55 }}
                       />
                     </div>
                   </>
                 ) : (
-                  <p style={{ color: "#94a3b8", fontSize: 13 }}>언어를 선택하세요.</p>
+                  <p style={{ color: "#94a3b8", fontSize: 13 }}>지역을 선택하세요.</p>
                 )}
               </div>
             </div>
@@ -2258,24 +2235,34 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
         <RewardDetailModal reward={rewardDetail} onClose={() => setRewardDetail(null)} />
       )}
 
-      {pendingLangAdd && (
+      {pendingRegionAdd && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 160, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setPendingLangAdd(null)}
+          onClick={() => setPendingRegionAdd(null)}
         >
           <div
             style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", width: 340, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#0f172a", lineHeight: 1.5 }}>
-              기본 언어(FB)의 제목, 내용, 발송인을<br />새 언어에 복사하시겠습니까?
+              기본(GLOBAL) 행의 제목, 내용, 발송인을<br />새 지역에 복사하시겠습니까?
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" onClick={() => confirmLangAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
-              <button type="button" onClick={() => confirmLangAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
+              <button type="button" onClick={() => confirmRegionAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
+              <button type="button" onClick={() => confirmRegionAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
             </div>
           </div>
         </div>
+      )}
+
+      {translateTarget && (
+        <AdminTranslateModal
+          regionCode={translateTarget.regionCode}
+          maxContentLength={MAX_MAIL_CONTENT}
+          onClose={() => setTranslateTarget(null)}
+          getFields={getOpenTranslateFields}
+          onApply={applyOpenTranslate}
+        />
       )}
 
       {submitTooltip && submitDisabledReason && (

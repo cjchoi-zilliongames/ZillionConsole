@@ -18,14 +18,17 @@ export const COLLECTION_PERSONAL_MAILS = "personal_mails";
 /** 개인 우편 발송 메타(제목·보상·recipientListPath 등). 수신자 본문은 Storage */
 export const COLLECTION_PERSONAL_MAIL_DISPATCHES = "personal_mail_dispatches";
 
-export type MailLocaleEntry = {
-  language: string;
+/** 국가·지역별 우편 문구 (ISO 3166-1 alpha-2 또는 예약 GLOBAL) */
+export type MailRegionEntry = {
+  regionCode: string;
   title: string;
   content: string;
-  /** 언어별 발송인 (v2). 없으면 전역 sender 폴백 */
+  /** 지역별 발송인. 없으면 전역 sender 폴백 */
   sender?: string;
+  /** 규약상 GLOBAL(첫 항목)만 true */
   fallback: boolean;
 };
+
 
 export type MailRewardStored = {
   table: string;
@@ -61,8 +64,8 @@ export type PersonalListEntry = {
   expiresAt: Timestamp;
   /** 유저에게 보이는 발송인 */
   sender: string;
-  /** 다국어 제목/내용 목록 (없으면 단일 언어) */
-  localeContents?: MailLocaleEntry[];
+  /** 국가·지역별 제목/내용 (없으면 단일 문구만) */
+  regionContents?: MailRegionEntry[];
   claimedAt?: Timestamp;
   /** 클라이언트가 수령 시 true (claimedAt 없을 때) */
   isClaimed?: boolean;

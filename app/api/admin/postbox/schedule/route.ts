@@ -6,8 +6,9 @@ import { jsonStorageError } from "@/lib/storage-api-response";
 import {
   COLLECTION_GLOBAL_MAILS,
   COLLECTION_PERSONAL_MAIL_DISPATCHES,
-  type MailLocaleEntry,
+  type MailRegionEntry,
 } from "@/lib/firestore-mail-schema";
+import { regionContentsFromStoredArray } from "@/lib/mail-region-parse";
 import type { RewardEntry, PostTargetAudience, PostRecipientUidMap } from "@/app/api/admin/postbox/posts/route";
 import type { RepeatDay } from "@/lib/postbox-compute-next-run";
 
@@ -29,7 +30,7 @@ export type MailScheduleJob = {
   postType: string;
   title: string;
   content: string;
-  localeContents: MailLocaleEntry[];
+  regionContents: MailRegionEntry[];
   sender: string;
   expiresAfterMs: number;
   rewards: RewardEntry[];
@@ -79,7 +80,13 @@ export async function GET(req: Request) {
         postType: "Admin",
         title: String(d.title ?? ""),
         content: String(d.content ?? ""),
-        localeContents: Array.isArray(d.localeContents) ? d.localeContents : [],
+        regionContents: regionContentsFromStoredArray(
+          Array.isArray(d.regionContents)
+            ? d.regionContents
+            : Array.isArray(d.localeContents)
+              ? d.localeContents
+              : [],
+        ),
         sender: String(d.sender ?? ""),
         expiresAfterMs: typeof d.expiresAfterMs === "number" ? d.expiresAfterMs : 7 * 24 * 60 * 60 * 1000,
         rewards: Array.isArray(d.rewards) ? d.rewards : [],

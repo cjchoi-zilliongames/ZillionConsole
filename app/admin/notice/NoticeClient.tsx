@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import type { NoticeDoc, NoticeLocaleEntry } from "@/app/api/admin/notices/route";
-import { noticeLocaleTabLabel } from "@/lib/notice-lang-display";
+import type { NoticeDoc, NoticeRegionEntry } from "@/app/api/admin/notices/route";
+import { regionTabLabel } from "@/lib/region-catalog";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { signalNoticeChange } from "@/lib/firestore-notice-signal";
@@ -28,6 +28,7 @@ import {
 } from "@/lib/admin-list-table-layout";
 import { AdminTableResizeHandle } from "@/lib/admin-table-resize-handle";
 import { useResizableAdminTableColumns } from "@/lib/use-resizable-admin-table-columns";
+import { orderRegionsGlobalFirst } from "@/lib/admin-region-order";
 
 const NOTICE_COL_RESIZE_LABELS = [
   "선택 열과 이름 열 사이 너비 조절",
@@ -46,11 +47,11 @@ function noticeMatchesSearch(notice: NoticeDoc, q: string): boolean {
   ) {
     return true;
   }
-  return (notice.contents ?? []).some(
+  return (notice.regionContents ?? []).some(
     (c) =>
       c.title.toLowerCase().includes(q) ||
       c.content.toLowerCase().includes(q) ||
-      c.language.toLowerCase().includes(q),
+      c.regionCode.toLowerCase().includes(q),
   );
 }
 
@@ -721,11 +722,8 @@ function PreviewFieldRow({
   );
 }
 
-function orderedLocaleTabs(contents: NoticeLocaleEntry[]): NoticeLocaleEntry[] {
-  const list = contents ?? [];
-  const fb = list.filter((c) => c.fallback);
-  const rest = list.filter((c) => !c.fallback).sort((a, b) => a.language.localeCompare(b.language));
-  return [...fb, ...rest];
+function orderedRegionTabs(contents: NoticeRegionEntry[]): NoticeRegionEntry[] {
+  return orderRegionsGlobalFirst(contents ?? []);
 }
 
 function NoticeDetailModal({
@@ -737,7 +735,7 @@ function NoticeDetailModal({
   onClose: () => void;
   onEdit: (n: NoticeDoc) => void;
 }) {
-  const tabs = useMemo(() => orderedLocaleTabs(notice.contents ?? []), [notice.contents]);
+  const tabs = useMemo(() => orderedRegionTabs(notice.regionContents ?? []), [notice.regionContents]);
   const [tabIdx, setTabIdx] = useState(0);
 
   const current = tabs[tabIdx] ?? tabs[0] ?? null;
@@ -856,13 +854,13 @@ function NoticeDetailModal({
           {tabs.length === 0 ? (
             <>
               <PreviewFieldRow label="공개 여부">{publicText}</PreviewFieldRow>
-              <div style={{ padding: "24px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>언어별 내용이 없습니다.</div>
+              <div style={{ padding: "24px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>지역별 내용이 없습니다.</div>
             </>
           ) : (
             <>
               <div
                 role="tablist"
-                aria-label="언어"
+                aria-label="지역"
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
@@ -876,7 +874,7 @@ function NoticeDetailModal({
                   const active = i === tabIdx;
                   return (
                     <button
-                      key={`${c.language}-${i}`}
+                      key={`${c.regionCode}-${i}`}
                       type="button"
                       role="tab"
                       aria-selected={active}
@@ -894,7 +892,7 @@ function NoticeDetailModal({
                         letterSpacing: "-0.01em",
                       }}
                     >
-                      {noticeLocaleTabLabel(c.language)}
+                      {regionTabLabel(c.regionCode)}
                     </button>
                   );
                 })}

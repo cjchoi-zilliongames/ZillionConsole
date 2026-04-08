@@ -18,8 +18,10 @@ import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { signalNoticeChange } from "@/lib/firestore-notice-signal";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
-import type { NoticeDoc, NoticeLocaleEntry, NoticePostSchedule } from "@/app/api/admin/notices/route";
-import { NOTICE_LANG_CATALOG } from "@/lib/notice-lang-display";
+import type { NoticeDoc, NoticeRegionEntry, NoticePostSchedule } from "@/app/api/admin/notices/route";
+import { AdminTranslateModal } from "@/app/admin/components/AdminTranslateModal";
+import { assignGlobalFirstFallback } from "@/lib/admin-region-order";
+import { REGION_GLOBAL, REGION_COUNTRY_OPTIONS, regionTabLabel, normalizeRegionCode } from "@/lib/region-catalog";
 import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
 
 registerLocale("ko", ko);
@@ -27,27 +29,25 @@ registerLocale("ko", ko);
 const noticeScheduleDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
 
 const MAX_BODY = 4000;
-const MAX_LANGS = 10;
+const MAX_REGIONS = 10;
 
-type LocaleRow = {
+type RegionRow = {
   id: string;
-  language: string;
+  regionCode: string;
   title: string;
   content: string;
   imageKey: string;
   author: string;
-  fallback: boolean;
 };
 
-function makeRow(language: string, fallback: boolean, seed?: { title?: string; content?: string; author?: string }): LocaleRow {
+function makeRow(regionCode: string, seed?: { title?: string; content?: string; author?: string }): RegionRow {
   return {
-    id: `${language}-${Math.random().toString(36).slice(2, 9)}`,
-    language,
+    id: `${regionCode}-${Math.random().toString(36).slice(2, 9)}`,
+    regionCode,
     title: seed?.title ?? "",
     content: seed?.content ?? "",
     imageKey: "",
     author: seed?.author ?? "",
-    fallback,
   };
 }
 
@@ -77,28 +77,16 @@ function initialScheduledAtDate(): Date {
   return clampScheduledDate(d);
 }
 
-function labelForLang(code: string): string {
-  return NOTICE_LANG_CATALOG.find((l) => l.code === code)?.label ?? code;
-}
-
-/** 미리보기 탭 순서와 동일하게 정렬 */
-function orderedLocaleRowsForEdit(contents: NoticeLocaleEntry[]): NoticeLocaleEntry[] {
-  const list = contents ?? [];
-  const fb = list.filter((c) => c.fallback);
-  const rest = list.filter((c) => !c.fallback).sort((a, b) => a.language.localeCompare(b.language));
-  return [...fb, ...rest];
-}
-
 /** 원격 수정 여부 비교용(열었을 때 스냅샷 vs 목록의 최신본) */
 function noticeContentSig(n: NoticeDoc): string {
-  const contents = orderedLocaleRowsForEdit(n.contents ?? []);
+  const regionContents = assignGlobalFirstFallback(n.regionContents ?? []);
   return JSON.stringify({
     noticeTitle: n.noticeTitle,
     author: n.author,
     isPublic: n.isPublic,
     postSchedule: n.postSchedule,
     postingAt: n.postingAt,
-    contents,
+    regionContents,
   });
 }
 
@@ -141,9 +129,10 @@ export function NoticeCreateModal({
   const [noticeName, setNoticeName] = useState("");
   const [postSchedule, setPostSchedule] = useState<NoticePostSchedule>("immediate");
   const [postingAtDate, setPostingAtDate] = useState<Date>(() => initialScheduledAtDate());
-  const [rows, setRows] = useState<LocaleRow[]>(() => [makeRow("en", true)]);
+  const [rows, setRows] = useState<RegionRow[]>(() => [makeRow(REGION_GLOBAL)]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [pendingLangAdd, setPendingLangAdd] = useState<{ code: string } | null>(null);
+  const [pendingRegionAdd, setPendingRegionAdd] = useState<{ code: string } | null>(null);
+  const [translateTarget, setTranslateTarget] = useState<{ rowId: string; regionCode: string } | null>(null);
 
   const activeRow = useMemo(() => {
     const first = rows[0];
@@ -157,7 +146,6 @@ export function NoticeCreateModal({
 
   const [isPublic, setIsPublic] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [listNewerThanOpen, setListNewerThanOpen] = useState(false);
@@ -169,25 +157,28 @@ export function NoticeCreateModal({
     const at = new Date(n.postingAt);
     setPostingAtDate(n.postSchedule === "scheduled" ? clampScheduledDate(at) : at);
     setIsPublic(n.isPublic === "y");
-    const ordered = orderedLocaleRowsForEdit(n.contents ?? []);
+    const rawList = n.regionContents ?? [];
+    const ordered = assignGlobalFirstFallback(rawList);
+    const globalAuthor = (n.author || "운영자").slice(0, 80);
+    const toRow = (c: NoticeRegionEntry, i: number): RegionRow => ({
+      id: `edit-${c.regionCode}-${i}`,
+      regionCode: c.regionCode,
+      title: c.title,
+      content: c.content,
+      imageKey: c.imageKey,
+      author: c.author || globalAuthor,
+    });
+    const hasGlobal = rawList.some((c) => normalizeRegionCode(c.regionCode) === REGION_GLOBAL);
+    let nextRows: RegionRow[];
     if (ordered.length === 0) {
-      setRows([makeRow("en", true)]);
-      setActiveId(null);
+      nextRows = [makeRow(REGION_GLOBAL)];
+    } else if (hasGlobal) {
+      nextRows = ordered.map((c, i) => toRow(c, i));
     } else {
-      const globalAuthor = (n.author || "운영자").slice(0, 80);
-      const nextRows: LocaleRow[] = ordered.map((c, i) => ({
-        id: `edit-${c.language}-${i}`,
-        language: c.language,
-        title: c.title,
-        content: c.content,
-        imageKey: c.imageKey,
-        author: (c as { author?: string }).author || globalAuthor,
-        fallback: c.fallback,
-      }));
-      setRows(nextRows);
-      const fb = nextRows.find((r) => r.fallback);
-      setActiveId(fb?.id ?? nextRows[0]?.id ?? null);
+      nextRows = [makeRow(REGION_GLOBAL), ...ordered.map((c, i) => toRow(c, i + 1))];
     }
+    setRows(nextRows);
+    setActiveId(nextRows[0]?.id ?? null);
   }
 
   useLayoutEffect(() => {
@@ -218,97 +209,73 @@ export function NoticeCreateModal({
     return time.getTime() >= scheduledEarliestAllowedDate().getTime();
   }, []);
 
-  const addableLangs = useMemo(
-    () => NOTICE_LANG_CATALOG.filter((l) => !rows.some((r) => r.language === l.code)),
+  const addableRegions = useMemo(
+    () => REGION_COUNTRY_OPTIONS.filter((l) => !rows.some((r) => r.regionCode === l.code)),
     [rows],
   );
 
-  function setActiveField<K extends keyof LocaleRow>(id: string, key: K, value: LocaleRow[K]) {
+  function setActiveField<K extends keyof RegionRow>(id: string, key: K, value: RegionRow[K]) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
-  }
-
-  function setFallbackFor(id: string) {
-    setRows((prev) => prev.map((r) => ({ ...r, fallback: r.id === id })));
   }
 
   function removeRow(id: string) {
     setRows((prev) => {
       if (prev.length <= 1) return prev;
+      if (prev[0]!.id === id) return prev;
       const next = prev.filter((r) => r.id !== id);
-      const removed = prev.find((r) => r.id === id);
-      if (removed?.fallback && next.length > 0) {
-        next[0] = { ...next[0]!, fallback: true };
-      }
       if (activeId === id) setActiveId(next[0]?.id ?? null);
       return next;
     });
   }
 
-  function addLanguage(code: string) {
-    if (rows.length >= MAX_LANGS) return;
-    const fbRow = rows.find((r) => r.fallback);
-    if (fbRow && (fbRow.title.trim() || fbRow.content.trim() || fbRow.author.trim())) {
-      setPendingLangAdd({ code });
+  function addRegionRow(code: string) {
+    if (rows.length >= MAX_REGIONS) return;
+    const globalRow = rows[0];
+    if (globalRow && (globalRow.title.trim() || globalRow.content.trim() || globalRow.author.trim())) {
+      setPendingRegionAdd({ code });
       return;
     }
-    const row = makeRow(code, false);
+    const row = makeRow(code);
     setRows((prev) => [...prev, row]);
     setActiveId(row.id);
   }
 
-  function confirmLangAdd(copyFb: boolean) {
-    if (!pendingLangAdd) return;
-    const { code } = pendingLangAdd;
-    const fbRow = rows.find((r) => r.fallback);
-    const seed = copyFb && fbRow ? { title: fbRow.title, content: fbRow.content, author: fbRow.author } : undefined;
-    const row = makeRow(code, false, seed);
+  function confirmRegionAdd(copyGlobal: boolean) {
+    if (!pendingRegionAdd) return;
+    const { code } = pendingRegionAdd;
+    const globalRow = rows[0];
+    const seed = copyGlobal && globalRow ? { title: globalRow.title, content: globalRow.content, author: globalRow.author } : undefined;
+    const row = makeRow(code, seed);
     setRows((prev) => [...prev, row]);
     setActiveId(row.id);
-    setPendingLangAdd(null);
+    setPendingRegionAdd(null);
   }
 
-  const canRunTranslate = useMemo(() => {
-    if (!activeRow) return false;
-    return !!(activeRow.title.trim() || activeRow.content.trim());
-  }, [activeRow]);
+  const getOpenTranslateFields = useCallback(() => {
+    if (!translateTarget) return { title: "", content: "", third: "" };
+    const r = rows.find((x) => x.id === translateTarget.rowId);
+    return {
+      title: r?.title ?? "",
+      content: r?.content ?? "",
+      third: r?.author ?? "",
+    };
+  }, [translateTarget, rows]);
 
-  const handleTranslate = useCallback(async () => {
-    if (!activeRow) return;
-    if (!activeRow.title.trim() && !activeRow.content.trim()) return;
-    setTranslating(true);
-    try {
-      const res = await authFetch("/api/admin/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceLang: "auto",
-          sourceTitle: activeRow.title,
-          sourceContent: activeRow.content,
-          sourceSender: activeRow.author,
-          targetLang: activeRow.language,
-        }),
-      });
-      const data = (await res.json()) as {
-        ok: boolean;
-        skipped?: boolean;
-        title?: string;
-        content?: string;
-        sender?: string;
-      };
-      if (!data.ok || data.skipped) return;
-      setActiveField(activeRow.id, "title", data.title ?? "");
-      setActiveField(activeRow.id, "content", (data.content ?? "").slice(0, MAX_BODY));
-      if (data.sender) setActiveField(activeRow.id, "author", data.sender);
-    } catch {
-    } finally {
-      setTranslating(false);
-    }
-  }, [activeRow]);
+  const applyOpenTranslate = useCallback(
+    (fields: { title: string; content: string; third: string }) => {
+      if (!translateTarget) return;
+      const id = translateTarget.rowId;
+      setRows((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, title: fields.title, content: fields.content, author: fields.third } : r)),
+      );
+    },
+    [translateTarget],
+  );
 
   const canSubmit = useMemo(() => {
     if (!noticeName.trim()) return false;
     if (rows.length === 0) return false;
-    if (rows.filter((r) => r.fallback).length !== 1) return false;
+    if (normalizeRegionCode(rows[0]!.regionCode) !== REGION_GLOBAL) return false;
     return rows.every((r) => r.title.trim() && r.content.trim());
   }, [noticeName, rows]);
 
@@ -346,8 +313,8 @@ export function NoticeCreateModal({
     }
     const postingIso =
       postSchedule === "scheduled" ? postingAtDate.toISOString() : new Date().toISOString();
-    const fbRow = rows.find((r) => r.fallback) ?? rows[0];
-    const author = fbRow?.author.trim() || (isEdit ? "운영자" : authorDisplay);
+    const fbRow = rows[0];
+    const author = fbRow.author.trim() || (isEdit ? "운영자" : authorDisplay);
 
     const payload: {
       uuid?: string;
@@ -356,20 +323,20 @@ export function NoticeCreateModal({
       isPublic: "y" | "n";
       postSchedule: NoticePostSchedule;
       postingAt: string;
-      contents: NoticeLocaleEntry[];
+      regionContents: NoticeRegionEntry[];
     } = {
       noticeTitle: noticeName.trim(),
       author,
       isPublic: isPublic ? "y" : "n",
       postSchedule,
       postingAt: postingIso,
-      contents: rows.map((r) => ({
-        language: r.language,
+      regionContents: rows.map((r, i) => ({
+        regionCode: normalizeRegionCode(r.regionCode),
         title: r.title.trim(),
         content: r.content,
         imageKey: r.imageKey.trim(),
         author: r.author.trim() || "운영자",
-        fallback: r.fallback,
+        fallback: i === 0,
       })),
     };
     if (isEdit && editNotice) {
@@ -421,7 +388,7 @@ export function NoticeCreateModal({
         padding: 12,
       }}
     >
-      <AdminGlobalLoadingOverlay message={translating ? "번역 중…" : null} />
+      <AdminGlobalLoadingOverlay message={null} />
       <div
         role="dialog"
         aria-modal="true"
@@ -456,18 +423,18 @@ export function NoticeCreateModal({
           </h2>
           <button
             type="button"
-            disabled={submitting || translating}
+            disabled={submitting}
             onClick={onClose}
             aria-label="닫기"
             style={{
               border: "none",
               background: "transparent",
-              cursor: submitting || translating ? "not-allowed" : "pointer",
+              cursor: submitting ? "not-allowed" : "pointer",
               color: "#64748b",
               fontSize: 24,
               lineHeight: 1,
               padding: "0 4px",
-              opacity: submitting || translating ? 0.5 : 1,
+              opacity: submitting ? 0.5 : 1,
             }}
           >
             ×
@@ -650,8 +617,8 @@ export function NoticeCreateModal({
                           color: "#64748b",
                         }}
                       >
-                        <span>언어 ({rows.length}/{MAX_LANGS})</span>
-                        <span title="언어는 최대 10개까지 추가할 수 있습니다." style={{ cursor: "help", color: "#94a3b8" }}>
+                        <span>국가·지역 ({rows.length}/{MAX_REGIONS})</span>
+                        <span title="지역은 최대 10개까지 추가할 수 있습니다." style={{ cursor: "help", color: "#94a3b8" }}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <circle cx="12" cy="12" r="3" />
                             <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
@@ -690,36 +657,19 @@ export function NoticeCreateModal({
                                   color: active ? "#1d4ed8" : "#334155",
                                 }}
                               >
-                                <span>{labelForLang(r.language)}</span>
+                                <span>{regionTabLabel(r.regionCode)}</span>
                               </button>
                               <button
                                 type="button"
-                                title="대표 언어로 지정"
-                                onClick={() => setFallbackFor(r.id)}
-                                style={{
-                                  padding: "4px 6px",
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                  borderRadius: 8,
-                                  border: r.fallback ? "1px solid #2563eb" : "1px solid #e2e8f0",
-                                  background: r.fallback ? "#dbeafe" : "#fff",
-                                  color: r.fallback ? "#1d4ed8" : "#64748b",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                FB
-                              </button>
-                              <button
-                                type="button"
-                                title="언어 제거"
-                                disabled={rows.length <= 1}
+                                title="지역 제거"
+                                disabled={rows.length <= 1 || r.id === rows[0]?.id}
                                 onClick={() => removeRow(r.id)}
                                 style={{
                                   padding: 4,
                                   border: "none",
                                   background: "transparent",
-                                  color: rows.length <= 1 ? "#e2e8f0" : "#94a3b8",
-                                  cursor: rows.length <= 1 ? "not-allowed" : "pointer",
+                                  color: rows.length <= 1 || r.id === rows[0]?.id ? "#e2e8f0" : "#94a3b8",
+                                  cursor: rows.length <= 1 || r.id === rows[0]?.id ? "not-allowed" : "pointer",
                                 }}
                               >
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -736,10 +686,10 @@ export function NoticeCreateModal({
                           value=""
                           onChange={(e) => {
                             const v = e.target.value;
-                            if (v) addLanguage(v);
+                            if (v) addRegionRow(v);
                             e.target.value = "";
                           }}
-                          disabled={addableLangs.length === 0 || rows.length >= MAX_LANGS}
+                          disabled={addableRegions.length === 0 || rows.length >= MAX_REGIONS}
                           style={{
                             width: "100%",
                             padding: "8px 10px",
@@ -747,11 +697,11 @@ export function NoticeCreateModal({
                             border: "1px solid #e2e8f0",
                             background: "#fff",
                             fontSize: 12,
-                            color: addableLangs.length === 0 ? "#94a3b8" : "#334155",
+                            color: addableRegions.length === 0 ? "#94a3b8" : "#334155",
                           }}
                         >
-                          <option value="">언어를 추가하세요.</option>
-                          {addableLangs.map((l) => (
+                          <option value="">국가·지역을 추가하세요.</option>
+                          {addableRegions.map((l) => (
                             <option key={l.code} value={l.code}>
                               {l.label}
                             </option>
@@ -767,29 +717,50 @@ export function NoticeCreateModal({
                             <FieldLabel style={{ marginBottom: 0 }}>작성자</FieldLabel>
                             <button
                               type="button"
-                              onClick={() => { void handleTranslate(); }}
-                              disabled={translating || !canRunTranslate}
+                              onClick={() => {
+                                if (!activeRow) return;
+                                setTranslateTarget({ rowId: activeRow.id, regionCode: activeRow.regionCode });
+                              }}
+                              disabled={!activeRow || !(activeRow.title.trim() || activeRow.content.trim())}
                               title={
-                                !canRunTranslate
-                                  ? "제목 또는 내용을 먼저 입력하세요"
-                                  : `제목·내용·작성자를 ${labelForLang(activeRow.language)}로 번역합니다`
+                                !activeRow
+                                  ? undefined
+                                  : !activeRow.title.trim() && !activeRow.content.trim()
+                                    ? "제목 또는 내용을 먼저 입력하세요"
+                                    : undefined
                               }
                               style={{
-                                display: "inline-flex", alignItems: "center", gap: 4,
-                                padding: "3px 8px", borderRadius: 6,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                padding: "3px 8px",
+                                borderRadius: 6,
                                 border: "1px solid #e2e8f0",
-                                background: translating || !canRunTranslate ? "#f1f5f9" : "#fff",
-                                color: translating || !canRunTranslate ? "#94a3b8" : "#6366f1",
-                                fontSize: 11, fontWeight: 600, cursor: translating ? "wait" : !canRunTranslate ? "not-allowed" : "pointer",
+                                background:
+                                  !activeRow || !(activeRow.title.trim() || activeRow.content.trim())
+                                    ? "#f1f5f9"
+                                    : "#fff",
+                                color:
+                                  !activeRow || !(activeRow.title.trim() || activeRow.content.trim())
+                                    ? "#94a3b8"
+                                    : "#6366f1",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor:
+                                  !activeRow || !(activeRow.title.trim() || activeRow.content.trim())
+                                    ? "not-allowed"
+                                    : "pointer",
                               }}
                             >
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.21 1.21 0 0 0 1.72 0L21.64 5.36a1.21 1.21 0 0 0 0-1.72Z" />
                                 <path d="m14 7 3 3" />
-                                <path d="M5 6v4" /><path d="M3 8h4" />
-                                <path d="M19 14v4" /><path d="M17 16h4" />
+                                <path d="M5 6v4" />
+                                <path d="M3 8h4" />
+                                <path d="M19 14v4" />
+                                <path d="M17 16h4" />
                               </svg>
-                                AI 번역
+                              AI 번역
                             </button>
                           </div>
                           <input
@@ -897,7 +868,7 @@ export function NoticeCreateModal({
                           </div>
                         </>
                       ) : (
-                        <p style={{ color: "#94a3b8", fontSize: 14 }}>언어를 선택하세요.</p>
+                        <p style={{ color: "#94a3b8", fontSize: 14 }}>지역을 선택하세요.</p>
                       )}
                     </div>
                   </div>
@@ -996,24 +967,34 @@ export function NoticeCreateModal({
             </footer>
           </>
         )}
-      {pendingLangAdd && (
+      {pendingRegionAdd && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 160, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setPendingLangAdd(null)}
+          onClick={() => setPendingRegionAdd(null)}
         >
           <div
             style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", width: 340, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#0f172a", lineHeight: 1.5 }}>
-              기본 언어(FB)의 제목, 내용, 작성자를<br />새 언어에 복사하시겠습니까?
+              기본(GLOBAL) 행의 제목, 내용, 작성자를<br />새 지역에 복사하시겠습니까?
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" onClick={() => confirmLangAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
-              <button type="button" onClick={() => confirmLangAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
+              <button type="button" onClick={() => confirmRegionAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
+              <button type="button" onClick={() => confirmRegionAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
             </div>
           </div>
         </div>
+      )}
+
+      {translateTarget && (
+        <AdminTranslateModal
+          regionCode={translateTarget.regionCode}
+          maxContentLength={MAX_BODY}
+          onClose={() => setTranslateTarget(null)}
+          getFields={getOpenTranslateFields}
+          onApply={applyOpenTranslate}
+        />
       )}
       </div>
     </div>

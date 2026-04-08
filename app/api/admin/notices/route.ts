@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { type DocumentData, Timestamp } from "firebase-admin/firestore";
+import { type DocumentData, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getFirestoreDb } from "@/lib/firebase-firestore";
 import { bumpNoticeSignalServer } from "@/lib/firestore-notice-signal-server";
 import { requireAnyAuth } from "@/lib/require-any-auth";
 import { jsonStorageError } from "@/lib/storage-api-response";
+import { assignGlobalFirstFallback } from "@/lib/admin-region-order";
+import { REGION_GLOBAL, normalizeRegionCode, isValidRegionCode } from "@/lib/region-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,13 +15,13 @@ export type NoticeIsPublic = "y" | "n";
 
 export type NoticePostSchedule = "immediate" | "scheduled";
 
-/** 언어별 블록 (버튼·URL 필드 없음) */
-export type NoticeLocaleEntry = {
-  language: string;
+/** 국가·지역별 블록 (버튼·URL 필드 없음) */
+export type NoticeRegionEntry = {
+  regionCode: string;
   title: string;
   content: string;
   imageKey: string;
-  /** 언어별 작성자 (v2). 없으면 전역 author 폴백 */
+  /** 지역별 작성자. 없으면 전역 author 폴백 */
   author?: string;
   fallback: boolean;
 };
@@ -34,7 +36,7 @@ export type NoticeDoc = {
   isPublic: NoticeIsPublic;
   noticeTitle: string;
   author: string;
-  contents: NoticeLocaleEntry[];
+  regionContents: NoticeRegionEntry[];
 };
 
 const MAX_NOTICE_TITLE = 200;
@@ -42,21 +44,24 @@ const MAX_AUTHOR = 80;
 const MAX_CONTENT_TITLE = 200;
 const MAX_CONTENT_BODY = 4000;
 const MAX_IMAGE_KEY = 500;
-const MAX_LANGS = 10;
+const MAX_REGIONS = 10;
 
 function normalizeIsPublic(v: unknown): NoticeIsPublic {
   return v === "n" ? "n" : "y";
 }
 
-function localeFromUnknown(raw: unknown): NoticeLocaleEntry | null {
+function regionFromUnknown(raw: unknown): NoticeRegionEntry | null {
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
-  const language =
-    typeof o.language === "string" && o.language.trim()
-      ? o.language.trim().slice(0, 16)
-      : "en";
+  const regionCode =
+    typeof o.regionCode === "string" && o.regionCode.trim()
+      ? normalizeRegionCode(o.regionCode)
+      : typeof o.language === "string" && o.language.trim()
+        ? normalizeRegionCode(o.language).slice(0, 16)
+        : "";
+  if (!regionCode) return null;
   return {
-    language,
+    regionCode,
     title: typeof o.title === "string" ? o.title : "",
     content: typeof o.content === "string" ? o.content : "",
     imageKey: typeof o.imageKey === "string" ? o.imageKey.slice(0, MAX_IMAGE_KEY) : "",
@@ -65,20 +70,26 @@ function localeFromUnknown(raw: unknown): NoticeLocaleEntry | null {
   };
 }
 
-function normalizeContentsFromDoc(d: DocumentData): NoticeLocaleEntry[] {
-  if (Array.isArray(d.contents)) {
-    return (d.contents as unknown[])
-      .map((x) => localeFromUnknown(x))
-      .filter((x): x is NoticeLocaleEntry => x != null);
+function normalizeRegionContentsFromDoc(d: DocumentData): NoticeRegionEntry[] {
+  const arr = Array.isArray(d.regionContents)
+    ? d.regionContents
+    : Array.isArray(d.contents)
+      ? d.contents
+      : null;
+  if (arr) {
+    return (arr as unknown[])
+      .map((x) => regionFromUnknown(x))
+      .filter((x): x is NoticeRegionEntry => x != null);
   }
   const c = d.content;
   if (c != null && typeof c === "object" && !Array.isArray(c)) {
     const o = c as Record<string, unknown>;
-    const one = localeFromUnknown({
-      language: o.language ?? "en",
+    const one = regionFromUnknown({
+      regionCode: o.regionCode ?? o.language ?? REGION_GLOBAL,
       title: o.title,
       content: o.content,
       imageKey: o.imageKey ?? "",
+      author: o.author,
       fallback: true,
     });
     return one ? [one] : [];
@@ -123,6 +134,7 @@ function docToNotice(docId: string, d: DocumentData): NoticeDoc {
   const postSchedule: NoticePostSchedule =
     d.postSchedule === "scheduled" ? "scheduled" : "immediate";
 
+  const rawContents = normalizeRegionContentsFromDoc(d);
   return {
     uuid: docId,
     inDate,
@@ -132,7 +144,7 @@ function docToNotice(docId: string, d: DocumentData): NoticeDoc {
     isPublic: normalizeIsPublic(d.isPublic),
     noticeTitle: typeof d.noticeTitle === "string" ? d.noticeTitle : "",
     author: typeof d.author === "string" ? d.author : "",
-    contents: normalizeContentsFromDoc(d),
+    regionContents: rawContents.length ? assignGlobalFirstFallback(rawContents) : [],
   };
 }
 
@@ -143,8 +155,8 @@ type ParsedNoticeWrite = {
   postingDate: string;
   postingAtDate: Date;
   isPublic: NoticeIsPublic;
-  contentsForStore: Array<{
-    language: string;
+  regionContentsForStore: Array<{
+    regionCode: string;
     title: string;
     content: string;
     imageKey: string;
@@ -185,56 +197,69 @@ function parseNoticeWritePayload(body: unknown): { ok: false; error: string } | 
 
   const postingDate = ymdFromDate(postingAtDate);
 
-  if (!Array.isArray(b.contents) || b.contents.length === 0) {
-    return { ok: false, error: "최소 1개 언어가 필요합니다." };
+  const rawArr = Array.isArray(b.regionContents)
+    ? b.regionContents
+    : Array.isArray(b.contents)
+      ? b.contents
+      : null;
+  if (!rawArr || rawArr.length === 0) {
+    return { ok: false, error: "최소 1개 지역 블록이 필요합니다." };
   }
-  if (b.contents.length > MAX_LANGS) {
-    return { ok: false, error: `언어는 최대 ${MAX_LANGS}개까지 추가할 수 있습니다.` };
-  }
-
-  const parsed: NoticeLocaleEntry[] = b.contents
-    .map((x) => localeFromUnknown(x))
-    .filter((x): x is NoticeLocaleEntry => x != null);
-
-  if (parsed.length !== b.contents.length) {
-    return { ok: false, error: "언어 블록 형식이 올바르지 않습니다." };
+  if (rawArr.length > MAX_REGIONS) {
+    return { ok: false, error: `지역은 최대 ${MAX_REGIONS}개까지 추가할 수 있습니다.` };
   }
 
-  const langs = new Set<string>();
+  const parsed: NoticeRegionEntry[] = rawArr
+    .map((x) => regionFromUnknown(x))
+    .filter((x): x is NoticeRegionEntry => x != null);
+
+  if (parsed.length !== rawArr.length) {
+    return { ok: false, error: "지역 블록 형식이 올바르지 않습니다." };
+  }
+
+  const codes = new Set<string>();
   for (const row of parsed) {
-    if (langs.has(row.language)) {
-      return { ok: false, error: `언어 코드가 중복되었습니다: ${row.language}` };
+    const k = normalizeRegionCode(row.regionCode);
+    if (codes.has(k)) {
+      return { ok: false, error: `지역 코드가 중복되었습니다: ${k}` };
     }
-    langs.add(row.language);
+    codes.add(k);
+    if (!isValidRegionCode(row.regionCode)) {
+      return { ok: false, error: `유효하지 않은 지역 코드: ${row.regionCode}` };
+    }
   }
 
-  const fallbackCount = parsed.filter((r) => r.fallback).length;
-  if (fallbackCount !== 1) {
-    return { ok: false, error: "기본 언어(FALLBACK)를 정확히 하나 지정해 주세요." };
+  if (!parsed.some((r) => normalizeRegionCode(r.regionCode) === REGION_GLOBAL)) {
+    return { ok: false, error: "기본(GLOBAL) 지역 블록이 필요합니다." };
   }
 
   for (const row of parsed) {
     if (!row.title.trim() || !row.content.trim()) {
-      return { ok: false, error: `언어 "${row.language}"의 제목·내용을 모두 입력해 주세요.` };
+      return { ok: false, error: `지역 "${row.regionCode}"의 제목·내용을 모두 입력해 주세요.` };
     }
     if (row.title.length > MAX_CONTENT_TITLE) {
       return { ok: false, error: "본문 제목이 너무 깁니다." };
     }
     if (row.content.length > MAX_CONTENT_BODY) {
-      return { ok: false, error: `본문 내용은 언어당 최대 ${MAX_CONTENT_BODY}자입니다.` };
+      return { ok: false, error: `본문 내용은 지역당 최대 ${MAX_CONTENT_BODY}자입니다.` };
     }
   }
 
-  const contentsForStore = parsed.map((r) => ({
-    language: r.language,
-    title: r.title.trim(),
-    content: r.content,
-    imageKey: r.imageKey.trim().slice(0, MAX_IMAGE_KEY),
-    author: typeof r.author === "string" ? r.author.trim().slice(0, MAX_AUTHOR) : "",
-    fallback: r.fallback,
-  }));
+  const regionContentsForStore = assignGlobalFirstFallback(
+    parsed.map((r) => ({
+      regionCode: normalizeRegionCode(r.regionCode),
+      title: r.title.trim(),
+      content: r.content,
+      imageKey: r.imageKey.trim().slice(0, MAX_IMAGE_KEY),
+      author: typeof r.author === "string" ? r.author.trim().slice(0, MAX_AUTHOR) : "",
+    })),
+  );
 
-  const fbContent = contentsForStore.find((c) => c.fallback);
+  if (normalizeRegionCode(regionContentsForStore[0]!.regionCode) !== REGION_GLOBAL) {
+    return { ok: false, error: "첫 번째 지역은 기본(GLOBAL)이어야 합니다." };
+  }
+
+  const fbContent = regionContentsForStore[0];
   const finalAuthor = fbContent?.author || author;
 
   return {
@@ -246,7 +271,7 @@ function parseNoticeWritePayload(body: unknown): { ok: false; error: string } | 
       postingDate,
       postingAtDate,
       isPublic: normalizeIsPublic(b.isPublic),
-      contentsForStore,
+      regionContentsForStore,
     },
   };
 }
@@ -275,7 +300,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
     }
 
-    const { noticeTitle, author, postSchedule, postingDate, postingAtDate, isPublic, contentsForStore } =
+    const { noticeTitle, author, postSchedule, postingDate, postingAtDate, isPublic, regionContentsForStore } =
       parsed.data;
 
     const uuid = randomUUID();
@@ -289,7 +314,7 @@ export async function POST(req: Request) {
       isPublic,
       noticeTitle,
       author,
-      contents: contentsForStore,
+      regionContents: regionContentsForStore,
     });
 
     await bumpNoticeSignalServer(db);
@@ -315,7 +340,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
     }
 
-    const { noticeTitle, author, postSchedule, postingDate, postingAtDate, isPublic, contentsForStore } =
+    const { noticeTitle, author, postSchedule, postingDate, postingAtDate, isPublic, regionContentsForStore } =
       parsed.data;
 
     const ref = db.collection("notices").doc(uuid);
@@ -331,7 +356,8 @@ export async function PATCH(req: Request) {
       isPublic,
       noticeTitle,
       author,
-      contents: contentsForStore,
+      regionContents: regionContentsForStore,
+      contents: FieldValue.delete(),
     });
 
     await bumpNoticeSignalServer(db);

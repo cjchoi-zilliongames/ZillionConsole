@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import type { PostDoc, PostType } from "@/app/api/admin/postbox/posts/route";
 import type { MailScheduleJob } from "@/app/api/admin/postbox/schedule/route";
-import { noticeLocaleTabLabel } from "@/lib/notice-lang-display";
+import { regionTabLabel } from "@/lib/region-catalog";
 import type { ReceiptsResponse, ReceiptRow } from "@/app/api/admin/postbox/receipts/route";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
@@ -31,6 +31,7 @@ import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { formatScheduledAtKo } from "@/lib/format-scheduled-at-ko";
 import { repeatUtcToKst, type RepeatDay } from "@/lib/postbox-compute-next-run";
+import { orderRegionsGlobalFirst } from "@/lib/admin-region-order";
 
 const POSTBOX_COL_RESIZE_LABELS = [
   "선택 열과 번호 열 사이 너비 조절",
@@ -497,7 +498,7 @@ export function PostboxClient() {
       recipientCount: job.recipientUids ? Object.keys(job.recipientUids).length : 0,
       recipientListPath: "",
       mailStorage: job.mailStorage,
-      localeContents: job.localeContents,
+      regionContents: job.regionContents,
       dispatchMode: job.type === "scheduled" ? "scheduled" : "repeat",
       visibleFrom: job.scheduledAt,
       repeatDays: job.repeatDays,
@@ -1236,11 +1237,9 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
   useEffect(() => { setPreviewTabIdx(0); }, [post.postId]);
 
   const previewTabs = useMemo(() => {
-    const list = post.localeContents ?? [];
-    const fb = list.filter((c) => c.fallback);
-    const rest = list.filter((c) => !c.fallback).sort((a, b) => a.language.localeCompare(b.language));
-    return [...fb, ...rest];
-  }, [post.localeContents]);
+    const list = post.regionContents ?? [];
+    return orderRegionsGlobalFirst(list);
+  }, [post.regionContents]);
 
   const previewCurrent = previewTabs[previewTabIdx] ?? previewTabs[0] ?? null;
 
@@ -1442,14 +1441,14 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
               <>
                 <div
                   role="tablist"
-                  aria-label="언어"
+                  aria-label="지역"
                   style={{ display: "flex", flexWrap: "wrap", borderBottom: "1px solid #e5e7eb" }}
                 >
                   {previewTabs.map((c, i) => {
                     const active = i === previewTabIdx;
                     return (
                       <button
-                        key={`${c.language}-${i}`}
+                        key={`${c.regionCode}-${i}`}
                         type="button"
                         role="tab"
                         aria-selected={active}
@@ -1467,7 +1466,7 @@ function PostReceiptModal({ post, onClose }: { post: PostDoc; onClose: () => voi
                           letterSpacing: "-0.01em",
                         }}
                       >
-                        {noticeLocaleTabLabel(c.language)}
+                        {regionTabLabel(c.regionCode)}
                       </button>
                     );
                   })}

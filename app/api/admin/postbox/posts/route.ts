@@ -14,12 +14,15 @@ import {
   COLLECTION_GLOBAL_MAILS,
   COLLECTION_PERSONAL_MAILS,
   COLLECTION_PERSONAL_MAIL_DISPATCHES,
-  type MailLocaleEntry,
+  type MailRegionEntry,
   type MailRewardStored,
   type PersonalListEntry,
   type DispatchMode,
   type RepeatDay,
 } from "@/lib/firestore-mail-schema";
+import { assignGlobalFirstFallback } from "@/lib/admin-region-order";
+import { mailRegionRowFromUnknown, regionContentsFromStoredArray } from "@/lib/mail-region-parse";
+import { REGION_GLOBAL, normalizeRegionCode, isValidRegionCode } from "@/lib/region-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,8 +60,8 @@ export type PostDoc = {
   /** mail-dispatches/{mailId}/recipients.json — 없으면 빈 문자열 */
   recipientListPath: string;
   mailStorage: MailStorageKind;
-  /** 다국어 제목/내용 (없으면 단일 언어) */
-  localeContents: MailLocaleEntry[];
+  /** 국가·지역별 제목/내용 (없으면 단일 문구만) */
+  regionContents: MailRegionEntry[];
   /** 발송 방식. 구 데이터에는 없으므로 "immediate"로 폴백 */
   dispatchMode: DispatchMode;
   /** 예약 우편: 이 시각 이후 클라이언트에 노출 (ISO) */
@@ -168,20 +171,13 @@ function tsToIso(v: unknown): string {
   return new Date(0).toISOString();
 }
 
-function localeContentsFromDoc(raw: unknown): MailLocaleEntry[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const o = item as Record<string, unknown>;
-    if (typeof o.language !== "string") return [];
-    return [{
-      language: o.language,
-      title: typeof o.title === "string" ? o.title : "",
-      content: typeof o.content === "string" ? o.content : "",
-      sender: typeof o.sender === "string" ? o.sender : "",
-      fallback: o.fallback === true,
-    }];
-  });
+function regionContentsFromDoc(d: DocumentData): MailRegionEntry[] {
+  const raw = Array.isArray(d.regionContents)
+    ? d.regionContents
+    : Array.isArray(d.localeContents)
+      ? d.localeContents
+      : [];
+  return regionContentsFromStoredArray(raw);
 }
 
 function readDispatchMode(d: DocumentData): DispatchMode {
@@ -207,7 +203,7 @@ function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
     recipientCount: 0,
     recipientListPath: "",
     mailStorage: "global_mails",
-    localeContents: localeContentsFromDoc(d.localeContents),
+    regionContents: regionContentsFromDoc(d),
     dispatchMode: mode,
     ...(d.visibleFrom ? { visibleFrom: tsToIso(d.visibleFrom) } : {}),
     ...(Array.isArray(d.repeatDays) ? { repeatDays: d.repeatDays } : {}),
@@ -246,7 +242,7 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
       recipientCount: typeof d.recipientCount === "number" ? d.recipientCount : 0,
       recipientListPath: d.recipientListPath,
       mailStorage: "personal_mail_dispatches",
-      localeContents: localeContentsFromDoc(d.localeContents),
+      regionContents: regionContentsFromDoc(d),
       ...extras,
     };
   }
@@ -266,7 +262,7 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
     recipientCount: Object.keys(recipientMap).length,
     recipientListPath: "",
     mailStorage: "personal_mail_dispatches",
-    localeContents: localeContentsFromDoc(d.localeContents),
+    regionContents: regionContentsFromDoc(d),
     ...extras,
   };
 }
@@ -574,7 +570,9 @@ export async function POST(req: Request) {
       rewards?: RewardEntry[];
       targetAudience?: "all" | "specific";
       recipientUids?: PostRecipientUidMap | string[];
-      localeContents?: MailLocaleEntry[];
+      regionContents?: MailRegionEntry[];
+      /** @deprecated regionContents 사용 */
+      localeContents?: MailRegionEntry[];
       dispatchMode?: DispatchMode;
       visibleFrom?: string;
       repeatDays?: RepeatDay[];
@@ -588,18 +586,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "필수 항목 누락" }, { status: 400 });
     }
 
-    const rawLocale = Array.isArray(body.localeContents) ? body.localeContents : [];
-    const localeContents: MailLocaleEntry[] = rawLocale
-      .filter((e) => e && typeof e.language === "string" && e.language.trim())
+    const rawRegions = Array.isArray(body.regionContents)
+      ? body.regionContents
+      : Array.isArray(body.localeContents)
+        ? body.localeContents
+        : [];
+    let regionContents: MailRegionEntry[] = (rawRegions as unknown[])
+      .map((e) => mailRegionRowFromUnknown(e))
+      .filter((r): r is MailRegionEntry => r != null)
       .map((e) => ({
-        language: e.language.trim(),
-        title: String(e.title ?? "").trim(),
+        regionCode: normalizeRegionCode(e.regionCode),
+        title: e.title.trim(),
         content: String(e.content ?? ""),
         sender: typeof e.sender === "string" ? e.sender.trim() : "",
         fallback: e.fallback === true,
       }));
-    if (localeContents.length > 0 && !localeContents.some((e) => e.fallback)) {
-      localeContents[0]!.fallback = true;
+    if (regionContents.length > 0) {
+      if (!regionContents.some((r) => normalizeRegionCode(r.regionCode) === REGION_GLOBAL)) {
+        return NextResponse.json({ ok: false, error: "기본(GLOBAL) 지역 블록이 필요합니다." }, { status: 400 });
+      }
+      regionContents = assignGlobalFirstFallback(regionContents);
+      if (normalizeRegionCode(regionContents[0]!.regionCode) !== REGION_GLOBAL) {
+        return NextResponse.json({ ok: false, error: "첫 번째 지역은 기본(GLOBAL)이어야 합니다." }, { status: 400 });
+      }
+      for (const row of regionContents) {
+        if (!isValidRegionCode(row.regionCode)) {
+          return NextResponse.json(
+            { ok: false, error: `유효하지 않은 지역 코드: ${row.regionCode}` },
+            { status: 400 },
+          );
+        }
+      }
     }
 
     if (postType !== "Admin") {
@@ -619,7 +636,7 @@ export async function POST(req: Request) {
       ? body.rewards.map((r) => rewardEntryFromInput(r)).filter((r): r is RewardEntry => r != null)
       : [];
     const storedRewards = rewardsToStored(rewards);
-    const fbLocale = localeContents.find((e) => e.fallback);
+    const fbLocale = regionContents.length > 0 ? regionContents[0] : undefined;
     const senderStr = fbLocale?.sender || sender || "운영팀";
 
     if (dispatchMode === "scheduled") {
@@ -670,7 +687,7 @@ export async function POST(req: Request) {
         rewards: storedRewards,
         ...buildScheduleFields(),
       };
-      if (localeContents.length > 0) globalDoc.localeContents = localeContents;
+      if (regionContents.length > 0) globalDoc.regionContents = regionContents;
       await db.collection(COLLECTION_GLOBAL_MAILS).doc(mailId).set(globalDoc);
       await bumpPostboxSignalServer(db);
       return NextResponse.json({ ok: true, postId: mailId });
@@ -706,7 +723,7 @@ export async function POST(req: Request) {
       recipientCount: uids.length,
       ...buildScheduleFields(),
     };
-    if (localeContents.length > 0) dispatchDoc.localeContents = localeContents;
+    if (regionContents.length > 0) dispatchDoc.regionContents = regionContents;
     await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set(dispatchDoc);
 
     const listEntry: PersonalListEntry = {
@@ -716,7 +733,7 @@ export async function POST(req: Request) {
       rewards: storedRewards,
       expiresAt: Timestamp.fromDate(expiresDate),
       sender: senderStr,
-      ...(localeContents.length > 0 ? { localeContents } : {}),
+      ...(regionContents.length > 0 ? { regionContents } : {}),
       ...(visibleFromDate ? { visibleFrom: Timestamp.fromDate(visibleFromDate) } : {}),
       ...(dispatchMode === "repeat" && body.repeatDays ? { repeatDays: body.repeatDays } : {}),
       ...(dispatchMode === "repeat" && body.repeatTime ? { repeatTime: body.repeatTime } : {}),
