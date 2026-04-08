@@ -52,7 +52,7 @@ type PostboxTab = "admin" | "scheduled" | "repeat" | "user" | "leaderboard";
 const TAB_POST_TYPE: Record<PostboxTab, PostType> = {
   admin: "Admin",
   scheduled: "Admin",
-  repeat: "Repeat",
+  repeat: "Admin",
   user: "User",
   leaderboard: "Leaderboard",
 };
@@ -162,6 +162,7 @@ export function PostboxClient() {
   // ── Data fetching ──────────────────────────────────────────────────────────
   const [posts, setPosts] = useState<PostDoc[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loadingMorePosts, setLoadingMorePosts] = useState(false);
   const [postsNextCursor, setPostsNextCursor] = useState<string | null>(null);
   const [postsHasMore, setPostsHasMore] = useState(false);
@@ -421,6 +422,7 @@ export function PostboxClient() {
   async function handleDelete() {
     if (selected.size === 0) return;
     if (!confirm(`선택한 우편 ${selected.size}개를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+    setDeleting(true);
     try {
       const res = await authFetch("/api/admin/postbox/posts", {
         method: "DELETE",
@@ -434,6 +436,8 @@ export function PostboxClient() {
       void signalPostboxChange();
     } catch (e) {
       alert(e instanceof Error ? e.message : "오류가 발생했습니다.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -510,7 +514,7 @@ export function PostboxClient() {
   return (
     <>
       <AdminGlobalLoadingOverlay
-        message={loading && !fetchError ? ADMIN_DATA_LOADING_MESSAGE : null}
+        message={deleting ? "처리 중…" : loading && !fetchError ? ADMIN_DATA_LOADING_MESSAGE : null}
       />
       <div style={{ padding: "19px 0 40px", width: "100%" }}>
         {/* Header */}
@@ -671,9 +675,7 @@ export function PostboxClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && filtered.length === 0 && !hasLegacyScheduleJobs ? (
-                    <tr><td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>불러오는 중...</td></tr>
-                  ) : filtered.length === 0 && !hasLegacyScheduleJobs ? (
+                  {filtered.length === 0 && !hasLegacyScheduleJobs ? (
                     <tr><td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>{search ? "검색 결과가 없습니다." : activeTab === "scheduled" ? "등록된 예약 우편이 없습니다." : "등록된 반복 우편이 없습니다."}</td></tr>
                   ) : (
                     <>
@@ -901,13 +903,7 @@ export function PostboxClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && pageItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
-                        불러오는 중...
-                      </td>
-                    </tr>
-                  ) : pageItems.length === 0 ? (
+                  {pageItems.length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>
                         {search ? "검색 결과가 없습니다." : "등록된 우편이 없습니다."}
