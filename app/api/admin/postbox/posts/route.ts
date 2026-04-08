@@ -100,7 +100,7 @@ function rewardEntryFromInput(r: unknown): RewardEntry | null {
   if (!table) return null;
   let count = 1;
   if (typeof o.count === "number" && Number.isFinite(o.count)) {
-    count = Math.max(1, Math.min(999_999, Math.floor(o.count)));
+    count = Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, o.count));
   }
   const rowValues = normalizeRowValues(o.rowValues);
   const base: RewardEntry = { table, row: o.row, count };

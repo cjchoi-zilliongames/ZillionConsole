@@ -1312,7 +1312,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   }
 
   function updateRewardCount(id: string, count: number) {
-    setRewards((prev) => prev.map((r) => r.id === id ? { ...r, count: Math.max(1, count) } : r));
+    setRewards((prev) => prev.map((r) => r.id === id ? { ...r, count: Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, count)) } : r));
   }
 
   function computeExpiresAt(): string {
@@ -2024,6 +2024,8 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                           id={`reward-count-${r.id}`}
                           type="number"
                           min={1}
+                          max={Number.MAX_SAFE_INTEGER}
+                          step="any"
                           value={r.count}
                           onChange={(e) => updateRewardCount(r.id, Number(e.target.value))}
                           style={{
