@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { storageAuthFetch as authFetch } from "@/lib/storage-auth-fetch";
 import { TRANSLATE_LANG_OPTIONS, recommendTranslateLangForRegion } from "@/lib/region-catalog";
+import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 
 type Props = {
   /** API 맥락용 — 현재 편집 중인 지역 탭 */
@@ -97,6 +98,7 @@ export function AdminTranslateModal({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
+      <AdminGlobalLoadingOverlay message={busy ? "번역중..." : null} />
       <div
         role="dialog"
         aria-modal="true"
@@ -169,7 +171,7 @@ export function AdminTranslateModal({
               cursor: busy || !canRun ? "not-allowed" : "pointer",
             }}
           >
-            {busy ? "번역 중…" : "번역"}
+            번역
           </button>
         </div>
       </div>
