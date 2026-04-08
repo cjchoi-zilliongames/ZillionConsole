@@ -98,7 +98,6 @@ export function AdminTranslateModal({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <AdminGlobalLoadingOverlay message={busy ? "번역중..." : null} />
       <div
         role="dialog"
         aria-modal="true"
@@ -175,6 +174,7 @@ export function AdminTranslateModal({
           </button>
         </div>
       </div>
+      <AdminGlobalLoadingOverlay message={busy ? "처리 중…" : null} />
     </div>
   );
 }
