@@ -2,7 +2,7 @@ import type { MailRegionEntry } from "@/lib/firestore-mail-schema";
 import { assignGlobalFirstFallback } from "@/lib/admin-region-order";
 import { normalizeRegionCode } from "@/lib/region-catalog";
 
-/** Firestore/레거시 JSON 한 행 → MailRegionEntry (language → regionCode 허용) */
+/** `regionContents[]` 한 행 JSON → MailRegionEntry (`regionCode` 우선, 구 행에만 `language` 키가 있으면 그 값을 코드로 사용) */
 export function mailRegionRowFromUnknown(item: unknown): MailRegionEntry | null {
   if (!item || typeof item !== "object") return null;
   const o = item as Record<string, unknown>;

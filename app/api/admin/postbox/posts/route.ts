@@ -172,11 +172,7 @@ function tsToIso(v: unknown): string {
 }
 
 function regionContentsFromDoc(d: DocumentData): MailRegionEntry[] {
-  const raw = Array.isArray(d.regionContents)
-    ? d.regionContents
-    : Array.isArray(d.localeContents)
-      ? d.localeContents
-      : [];
+  const raw = Array.isArray(d.regionContents) ? d.regionContents : [];
   return regionContentsFromStoredArray(raw);
 }
 
@@ -571,8 +567,6 @@ export async function POST(req: Request) {
       targetAudience?: "all" | "specific";
       recipientUids?: PostRecipientUidMap | string[];
       regionContents?: MailRegionEntry[];
-      /** @deprecated regionContents 사용 */
-      localeContents?: MailRegionEntry[];
       dispatchMode?: DispatchMode;
       visibleFrom?: string;
       repeatDays?: RepeatDay[];
@@ -586,11 +580,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "필수 항목 누락" }, { status: 400 });
     }
 
-    const rawRegions = Array.isArray(body.regionContents)
-      ? body.regionContents
-      : Array.isArray(body.localeContents)
-        ? body.localeContents
-        : [];
+    const rawRegions = Array.isArray(body.regionContents) ? body.regionContents : [];
     let regionContents: MailRegionEntry[] = (rawRegions as unknown[])
       .map((e) => mailRegionRowFromUnknown(e))
       .filter((r): r is MailRegionEntry => r != null)

@@ -71,30 +71,10 @@ function regionFromUnknown(raw: unknown): NoticeRegionEntry | null {
 }
 
 function normalizeRegionContentsFromDoc(d: DocumentData): NoticeRegionEntry[] {
-  const arr = Array.isArray(d.regionContents)
-    ? d.regionContents
-    : Array.isArray(d.contents)
-      ? d.contents
-      : null;
-  if (arr) {
-    return (arr as unknown[])
-      .map((x) => regionFromUnknown(x))
-      .filter((x): x is NoticeRegionEntry => x != null);
-  }
-  const c = d.content;
-  if (c != null && typeof c === "object" && !Array.isArray(c)) {
-    const o = c as Record<string, unknown>;
-    const one = regionFromUnknown({
-      regionCode: o.regionCode ?? o.language ?? REGION_GLOBAL,
-      title: o.title,
-      content: o.content,
-      imageKey: o.imageKey ?? "",
-      author: o.author,
-      fallback: true,
-    });
-    return one ? [one] : [];
-  }
-  return [];
+  if (!Array.isArray(d.regionContents)) return [];
+  return (d.regionContents as unknown[])
+    .map((x) => regionFromUnknown(x))
+    .filter((x): x is NoticeRegionEntry => x != null);
 }
 
 function ymdFromDate(d: Date): string {
@@ -183,8 +163,7 @@ function parseNoticeWritePayload(body: unknown): { ok: false; error: string } | 
   const authorRaw = typeof b.author === "string" ? b.author.trim() : "";
   const author =
     authorRaw.length > MAX_AUTHOR ? authorRaw.slice(0, MAX_AUTHOR) : authorRaw || "운영자";
-  // FB locale의 author가 있으면 전역 author 덮어쓰기 (하위 호환)
-  // → contentsForStore 이후 fbAuthor로 재결정
+  // 첫 행(GLOBAL) author가 있으면 전역 author로 반영
 
   const postSchedule: NoticePostSchedule =
     b.postSchedule === "scheduled" ? "scheduled" : "immediate";
@@ -197,11 +176,7 @@ function parseNoticeWritePayload(body: unknown): { ok: false; error: string } | 
 
   const postingDate = ymdFromDate(postingAtDate);
 
-  const rawArr = Array.isArray(b.regionContents)
-    ? b.regionContents
-    : Array.isArray(b.contents)
-      ? b.contents
-      : null;
+  const rawArr = Array.isArray(b.regionContents) ? b.regionContents : null;
   if (!rawArr || rawArr.length === 0) {
     return { ok: false, error: "최소 1개 지역 블록이 필요합니다." };
   }

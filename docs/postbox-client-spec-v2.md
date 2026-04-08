@@ -28,7 +28,7 @@
 | `repeatWindowMs` | `number` | `repeat` | 각 회차의 유효 시간(밀리초). 이 시간이 지나면 해당 회차 미수령 처리 |
 | `expiresAfterDays` | `number` | `repeat` | 관리자가 선택한 회차별 만료 일수 (`1` / `7` / `14` / `30`). `repeatWindowMs`와 동일 의미의 사람 친화적 표현 |
 
-> `isActive`, `expiresAt`, `createdAt`, `title`, `content`, `sender`, `rewards`, `localeContents` 등 기존 필드는 **그대로** 유지.
+> `isActive`, `expiresAt`, `createdAt`, `title`, `content`, `sender`, `rewards`, `regionContents` 등 기존 필드는 **그대로** 유지.
 
 ### 2-2. `personal_mails/{uid}.personal_list[]` 항목
 
@@ -229,36 +229,24 @@ function hasClaimedThisWindow(entry, windowStart):
 
 ---
 
-## 8. 언어별 발송인(sender) — v3 변경
+## 8. 지역별 발송인(sender) / 공지 작성자 — v3
 
-### 변경 의도
-
-기존에는 우편 문서에 전역 `sender` 필드 하나만 있었다. 다국어 우편에서 발송인도 언어별로 다르게 표시해야 하므로, `localeContents[]` 배열 안에 `sender` 필드를 추가했다. 전역 `sender`는 하위 호환용으로 유지한다.
-
-### 우편 (global_mails / personal_mail_dispatches)
+### 우편 (`regionContents[]`)
 
 | 위치 | 필드 | 타입 | 설명 |
 |------|------|------|------|
-| `localeContents[]` | `sender` | `string` | **NEW (v3)** — 해당 언어의 발송인. 예: `"운영팀"` (ko), `"Operations"` (en) |
-| 문서 루트 | `sender` | `string` | 하위 호환용. FB 언어의 sender와 동일 값. 새 필드가 없는 구 데이터에서 폴백 |
+| `regionContents[]` | `sender` | `string` | (선택) 해당 지역 탭 발송인 |
+| 문서 루트 | `sender` | `string` | 폴백. 지역 행에 `sender` 없을 때 |
 
-**클라이언트 발송인 결정 우선순위**:
-1. 유저 언어에 매칭되는 `localeContents[]` 항목의 `sender` 사용
-2. 매칭 항목 없거나 `sender`가 빈 문자열이면 → `fallback: true` 항목의 `sender`
-3. 그래도 없으면 → 문서 루트의 전역 `sender` 필드
+**발송인 우선순위**: 선택된 지역 행의 `sender` → `fallback: true`(GLOBAL) 행의 `sender` → 문서 루트 `sender`.
 
-### personal_list[] 항목
+### `personal_list[]`
 
-`PersonalListEntry.localeContents[].sender` 동일 적용. 전역 `PersonalListEntry.sender`도 하위 호환용으로 유지.
+`regionContents[].sender` 동일. 루트 `sender` 폴백.
 
-### 공지 (notices)
+### 공지 (`notices`)
 
-| 위치 | 필드 | 타입 | 설명 |
-|------|------|------|------|
-| `contents[]` | `author` | `string` | **NEW (v3)** — 해당 언어의 작성자 |
-| 문서 루트 | `author` | `string` | 하위 호환용. FB 언어의 author와 동일 값 |
-
-클라이언트 결정 우선순위: 우편의 `sender`와 동일 패턴.
+`regionContents[].author` · 루트 `author` 폴백. 우편 `sender`와 같은 패턴.
 
 ---
 
@@ -278,11 +266,11 @@ interface MailDocument {
   createdAt: Timestamp;
   expiresAt: Timestamp;
   rewards: { table: string; row: string; count: number; rowValues?: Record<string, string> }[];
-  localeContents?: {
-    language: string;
+  regionContents?: {
+    regionCode: string;
     title: string;
     content: string;
-    sender?: string;       // v3: 언어별 발송인
+    sender?: string;
     fallback: boolean;
   }[];
 
@@ -303,11 +291,11 @@ interface PersonalListEntry {
   rewards: { table: string; row: string; count: number; rowValues?: Record<string, string> }[];
   expiresAt: Timestamp;
   sender: string;                    // 하위 호환용 (FB sender)
-  localeContents?: {
-    language: string;
+  regionContents?: {
+    regionCode: string;
     title: string;
     content: string;
-    sender?: string;       // v3: 언어별 발송인
+    sender?: string;
     fallback: boolean;
   }[];
   claimedAt?: Timestamp;

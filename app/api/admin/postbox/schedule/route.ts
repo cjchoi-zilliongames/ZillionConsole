@@ -80,13 +80,7 @@ export async function GET(req: Request) {
         postType: "Admin",
         title: String(d.title ?? ""),
         content: String(d.content ?? ""),
-        regionContents: regionContentsFromStoredArray(
-          Array.isArray(d.regionContents)
-            ? d.regionContents
-            : Array.isArray(d.localeContents)
-              ? d.localeContents
-              : [],
-        ),
+        regionContents: regionContentsFromStoredArray(Array.isArray(d.regionContents) ? d.regionContents : []),
         sender: String(d.sender ?? ""),
         expiresAfterMs: typeof d.expiresAfterMs === "number" ? d.expiresAfterMs : 7 * 24 * 60 * 60 * 1000,
         rewards: Array.isArray(d.rewards) ? d.rewards : [],

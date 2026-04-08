@@ -18,7 +18,8 @@ import { offset } from "@floating-ui/react";
 import "react-datepicker/dist/react-datepicker.css";
 import type { RewardEntry } from "@/app/api/admin/postbox/posts/route";
 import type { MailRegionEntry } from "@/lib/firestore-mail-schema";
-import { REGION_GLOBAL, REGION_COUNTRY_OPTIONS, regionLabel } from "@/lib/region-catalog";
+import { REGION_GLOBAL, REGION_COUNTRY_OPTIONS, regionLabel, regionTabLabel } from "@/lib/region-catalog";
+import { AdminRegionCopySourceModal } from "@/app/admin/components/AdminRegionCopySourceModal";
 import { AdminTranslateModal } from "@/app/admin/components/AdminTranslateModal";
 import type { PostboxChartInfo } from "@/app/api/storage/chart-postbox-flags/route";
 import { parseCsv } from "@/lib/spec/csv-parser";
@@ -1233,10 +1234,13 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     });
   }
 
+  function rowHasCopyableContent(r: RegionRow): boolean {
+    return !!(r.title.trim() || r.content.trim() || r.sender.trim());
+  }
+
   function addRegionRow(code: string) {
     if (regionRows.length >= MAX_MAIL_REGIONS) return;
-    const globalRow = regionRows[0];
-    if (globalRow && (globalRow.title.trim() || globalRow.content.trim() || globalRow.sender.trim())) {
+    if (regionRows.some(rowHasCopyableContent)) {
       setPendingRegionAdd({ code });
       return;
     }
@@ -1245,11 +1249,11 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     setRegionActiveId(row.id);
   }
 
-  function confirmRegionAdd(copyGlobal: boolean) {
+  function finalizeRegionAdd(sourceRowId: string | null) {
     if (!pendingRegionAdd) return;
     const { code } = pendingRegionAdd;
-    const globalRow = regionRows[0];
-    const seed = copyGlobal && globalRow ? { title: globalRow.title, content: globalRow.content, sender: globalRow.sender } : undefined;
+    const src = sourceRowId ? regionRows.find((r) => r.id === sourceRowId) : null;
+    const seed = src ? { title: src.title, content: src.content, sender: src.sender } : undefined;
     const row = makeRegionRow(code, seed);
     setRegionRows((prev) => [...prev, row]);
     setRegionActiveId(row.id);
@@ -2236,23 +2240,15 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       )}
 
       {pendingRegionAdd && (
-        <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 160, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setPendingRegionAdd(null)}
-        >
-          <div
-            style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", width: 340, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#0f172a", lineHeight: 1.5 }}>
-              기본(GLOBAL) 행의 제목, 내용, 발송인을<br />새 지역에 복사하시겠습니까?
-            </p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" onClick={() => confirmRegionAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
-              <button type="button" onClick={() => confirmRegionAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
-            </div>
-          </div>
-        </div>
+        <AdminRegionCopySourceModal
+          sources={regionRows.map((r) => ({
+            id: r.id,
+            label: regionTabLabel(r.regionCode),
+          }))}
+          onClose={() => setPendingRegionAdd(null)}
+          onPickSource={(id) => finalizeRegionAdd(id)}
+          onPickEmpty={() => finalizeRegionAdd(null)}
+        />
       )}
 
       {translateTarget && (

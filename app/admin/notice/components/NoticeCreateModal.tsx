@@ -22,6 +22,7 @@ import type { NoticeDoc, NoticeRegionEntry, NoticePostSchedule } from "@/app/api
 import { AdminTranslateModal } from "@/app/admin/components/AdminTranslateModal";
 import { assignGlobalFirstFallback } from "@/lib/admin-region-order";
 import { REGION_GLOBAL, REGION_COUNTRY_OPTIONS, regionTabLabel, normalizeRegionCode } from "@/lib/region-catalog";
+import { AdminRegionCopySourceModal } from "@/app/admin/components/AdminRegionCopySourceModal";
 import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
 
 registerLocale("ko", ko);
@@ -40,13 +41,16 @@ type RegionRow = {
   author: string;
 };
 
-function makeRow(regionCode: string, seed?: { title?: string; content?: string; author?: string }): RegionRow {
+function makeRow(
+  regionCode: string,
+  seed?: { title?: string; content?: string; author?: string; imageKey?: string },
+): RegionRow {
   return {
     id: `${regionCode}-${Math.random().toString(36).slice(2, 9)}`,
     regionCode,
     title: seed?.title ?? "",
     content: seed?.content ?? "",
-    imageKey: "",
+    imageKey: seed?.imageKey ?? "",
     author: seed?.author ?? "",
   };
 }
@@ -228,10 +232,13 @@ export function NoticeCreateModal({
     });
   }
 
+  function rowHasCopyableContent(r: RegionRow): boolean {
+    return !!(r.title.trim() || r.content.trim() || r.author.trim() || r.imageKey.trim());
+  }
+
   function addRegionRow(code: string) {
     if (rows.length >= MAX_REGIONS) return;
-    const globalRow = rows[0];
-    if (globalRow && (globalRow.title.trim() || globalRow.content.trim() || globalRow.author.trim())) {
+    if (rows.some(rowHasCopyableContent)) {
       setPendingRegionAdd({ code });
       return;
     }
@@ -240,11 +247,18 @@ export function NoticeCreateModal({
     setActiveId(row.id);
   }
 
-  function confirmRegionAdd(copyGlobal: boolean) {
+  function finalizeRegionAdd(sourceRowId: string | null) {
     if (!pendingRegionAdd) return;
     const { code } = pendingRegionAdd;
-    const globalRow = rows[0];
-    const seed = copyGlobal && globalRow ? { title: globalRow.title, content: globalRow.content, author: globalRow.author } : undefined;
+    const src = sourceRowId ? rows.find((r) => r.id === sourceRowId) : null;
+    const seed = src
+      ? {
+          title: src.title,
+          content: src.content,
+          author: src.author,
+          imageKey: src.imageKey,
+        }
+      : undefined;
     const row = makeRow(code, seed);
     setRows((prev) => [...prev, row]);
     setActiveId(row.id);
@@ -968,23 +982,15 @@ export function NoticeCreateModal({
           </>
         )}
       {pendingRegionAdd && (
-        <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 160, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setPendingRegionAdd(null)}
-        >
-          <div
-            style={{ background: "#fff", borderRadius: 12, padding: "20px 24px", width: 340, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 600, color: "#0f172a", lineHeight: 1.5 }}>
-              기본(GLOBAL) 행의 제목, 내용, 작성자를<br />새 지역에 복사하시겠습니까?
-            </p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button type="button" onClick={() => confirmRegionAdd(false)} style={{ padding: "7px 16px", borderRadius: 7, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>아니오</button>
-              <button type="button" onClick={() => confirmRegionAdd(true)} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#0f172a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>예</button>
-            </div>
-          </div>
-        </div>
+        <AdminRegionCopySourceModal
+          sources={rows.map((r) => ({
+            id: r.id,
+            label: regionTabLabel(r.regionCode),
+          }))}
+          onClose={() => setPendingRegionAdd(null)}
+          onPickSource={(id) => finalizeRegionAdd(id)}
+          onPickEmpty={() => finalizeRegionAdd(null)}
+        />
       )}
 
       {translateTarget && (
