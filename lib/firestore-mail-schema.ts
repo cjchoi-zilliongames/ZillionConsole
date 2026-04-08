@@ -32,6 +32,11 @@ export type MailRewardStored = {
   rowValues?: Record<string, string>;
 };
 
+export type RepeatDay = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
+
+/** 우편 발송 방식 — Firestore 문서에 저장 */
+export type DispatchMode = "immediate" | "scheduled" | "repeat";
+
 /** global_history 항목 (수령·중복 방지 + UI용 비정규화) */
 export type GlobalHistoryEntry = {
   globalMailId: string;
@@ -41,6 +46,8 @@ export type GlobalHistoryEntry = {
   sender?: string;
   /** 선택 — 클라이언트가 넣으면 수령 현황에 표시 */
   claimedAt?: Timestamp;
+  /** 반복 우편: 어느 회차에 수령했는지 ("YYYY-MM-DD") — 회차별 중복 수령 방지 */
+  repeatKey?: string;
 };
 
 /** personal_list 항목 */
@@ -58,4 +65,12 @@ export type PersonalListEntry = {
   /** 클라이언트가 수령 시 true (claimedAt 없을 때) */
   isClaimed?: boolean;
   dismissedAt?: Timestamp;
+  /** 예약/반복 우편: 이 시각 이후부터 클라이언트에 표시 */
+  visibleFrom?: Timestamp;
+  /** 반복 우편: 반복 요일 */
+  repeatDays?: RepeatDay[];
+  /** 반복 우편: 발송 시각 ("HH:mm", UTC) */
+  repeatTime?: string;
+  /** 반복 우편: 각 회차 유효 시간(ms) */
+  repeatWindowMs?: number;
 };

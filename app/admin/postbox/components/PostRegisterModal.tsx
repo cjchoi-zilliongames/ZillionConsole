@@ -29,6 +29,7 @@ import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoa
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
 import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
 import { computeNextRunAt, type RepeatDay } from "@/lib/postbox-compute-next-run";
+import type { DispatchMode } from "@/lib/firestore-mail-schema";
 
 registerLocale("ko", ko);
 
@@ -1351,8 +1352,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
     if (submitDisabledReason) return;
 
-    const validRows = langRows.filter((r) => r.title.trim() && r.content.trim());
-
     if (audienceMode === "specific" && pickedUsers.length === 0) {
       setError("직접 발송일 때 수신 유저를 목록에서 선택해 추가하세요.");
       return;
@@ -1373,60 +1372,57 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       ...(Object.keys(r.rowValues).length ? { rowValues: r.rowValues } : {}),
     }));
 
+    let expiresAtIso: string;
+    let visibleFromIso: string | undefined;
+    let bodyRepeatDays: typeof repeatDays | undefined;
+    let bodyRepeatTime: string | undefined;
+    let bodyRepeatWindowMs: number | undefined;
+    const dm: DispatchMode = dispatchType as DispatchMode;
+
+    if (dispatchType === "immediate") {
+      expiresAtIso = new Date(computeExpiresAt()).toISOString();
+    } else if (dispatchType === "scheduled") {
+      visibleFromIso = scheduledAtDate.toISOString();
+      if (expiryPreset === "custom") {
+        expiresAtIso = new Date(customExpiry).toISOString();
+      } else {
+        expiresAtIso = new Date(scheduledAtDate.getTime() + computeExpiresAfterMs()).toISOString();
+      }
+    } else {
+      visibleFromIso = computeNextRunAt(repeatDays, repeatTime).toISOString();
+      bodyRepeatDays = repeatDays;
+      bodyRepeatTime = repeatTime;
+      bodyRepeatWindowMs = computeExpiresAfterMs();
+      expiresAtIso = new Date("2099-12-31T23:59:59Z").toISOString();
+    }
+
     setSubmitting(true);
     try {
-      if (dispatchType === "immediate") {
-        const res = await authFetch("/api/admin/postbox/posts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            postType: "Admin",
-            title: fallbackRow.title.trim(),
-            content: fallbackRow.content,
-            localeContents,
-            sender: sender.trim() || "운영팀",
-            expiresAt: new Date(computeExpiresAt()).toISOString(),
-            rewards: rewardEntries,
-            targetAudience: audienceMode === "specific" ? "specific" : "all",
-            recipientUids:
-              audienceMode === "specific"
-                ? Object.fromEntries(pickedUsers.map((p) => [p.uid, p.label]))
-                : undefined,
-          }),
-        });
-        const data = await res.json() as { ok: boolean; error?: string };
-        if (!data.ok) throw new Error(data.error ?? "등록 실패");
-      } else {
-        let expiresAfterMsPayload = computeExpiresAfterMs();
-        if (expiryPreset === "custom" && dispatchType === "scheduled") {
-          const customEnd = new Date(customExpiry).getTime();
-          expiresAfterMsPayload = customEnd - scheduledAtDate.getTime();
-        }
-        const res = await authFetch("/api/admin/postbox/schedule", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            dispatchType,
-            scheduledAt: dispatchType === "scheduled" ? scheduledAtDate.toISOString() : undefined,
-            repeatDays: dispatchType === "repeat" ? repeatDays : undefined,
-            repeatTime: dispatchType === "repeat" ? repeatTime : undefined,
-            postType: "Admin",
-            title: fallbackRow.title.trim(),
-            content: fallbackRow.content,
-            localeContents,
-            sender: sender.trim() || "운영팀",
-            expiresAfterMs: expiresAfterMsPayload,
-            rewards: rewardEntries,
-            targetAudience: audienceMode === "specific" ? "specific" : "all",
-            recipientUids:
-              audienceMode === "specific"
-                ? Object.fromEntries(pickedUsers.map((p) => [p.uid, p.label]))
-                : undefined,
-          }),
-        });
-        const data = await res.json() as { ok: boolean; error?: string };
-        if (!data.ok) throw new Error(data.error ?? "등록 실패");
-      }
+      const res = await authFetch("/api/admin/postbox/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postType: "Admin",
+          title: fallbackRow.title.trim(),
+          content: fallbackRow.content,
+          localeContents,
+          sender: sender.trim() || "운영팀",
+          expiresAt: expiresAtIso,
+          rewards: rewardEntries,
+          targetAudience: audienceMode === "specific" ? "specific" : "all",
+          recipientUids:
+            audienceMode === "specific"
+              ? Object.fromEntries(pickedUsers.map((p) => [p.uid, p.label]))
+              : undefined,
+          dispatchMode: dm,
+          visibleFrom: visibleFromIso,
+          repeatDays: bodyRepeatDays,
+          repeatTime: bodyRepeatTime,
+          repeatWindowMs: bodyRepeatWindowMs,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error ?? "등록 실패");
       void signalPostboxChange();
       onCreated();
     } catch (err) {

@@ -17,6 +17,8 @@ import {
   type MailLocaleEntry,
   type MailRewardStored,
   type PersonalListEntry,
+  type DispatchMode,
+  type RepeatDay,
 } from "@/lib/firestore-mail-schema";
 
 export const runtime = "nodejs";
@@ -57,6 +59,16 @@ export type PostDoc = {
   mailStorage: MailStorageKind;
   /** 다국어 제목/내용 (없으면 단일 언어) */
   localeContents: MailLocaleEntry[];
+  /** 발송 방식. 구 데이터에는 없으므로 "immediate"로 폴백 */
+  dispatchMode: DispatchMode;
+  /** 예약 우편: 이 시각 이후 클라이언트에 노출 (ISO) */
+  visibleFrom?: string;
+  /** 반복 우편: 반복 요일 */
+  repeatDays?: RepeatDay[];
+  /** 반복 우편: 발송 시각 ("HH:mm", UTC) */
+  repeatTime?: string;
+  /** 반복 우편: 각 회차 유효 시간(ms) */
+  repeatWindowMs?: number;
 };
 
 const MAX_ROW_VALUE_KEY_LEN = 256;
@@ -169,7 +181,14 @@ function localeContentsFromDoc(raw: unknown): MailLocaleEntry[] {
   });
 }
 
+function readDispatchMode(d: DocumentData): DispatchMode {
+  const v = d.dispatchMode;
+  if (v === "scheduled" || v === "repeat") return v;
+  return "immediate";
+}
+
 function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
+  const mode = readDispatchMode(d);
   return {
     postId: id,
     postType: "Admin",
@@ -186,10 +205,27 @@ function docToPostDocGlobal(id: string, d: DocumentData): PostDoc {
     recipientListPath: "",
     mailStorage: "global_mails",
     localeContents: localeContentsFromDoc(d.localeContents),
+    dispatchMode: mode,
+    ...(d.visibleFrom ? { visibleFrom: tsToIso(d.visibleFrom) } : {}),
+    ...(Array.isArray(d.repeatDays) ? { repeatDays: d.repeatDays } : {}),
+    ...(typeof d.repeatTime === "string" ? { repeatTime: d.repeatTime } : {}),
+    ...(typeof d.repeatWindowMs === "number" ? { repeatWindowMs: d.repeatWindowMs } : {}),
+  };
+}
+
+function dispatchExtras(d: DocumentData) {
+  const mode = readDispatchMode(d);
+  return {
+    dispatchMode: mode,
+    ...(d.visibleFrom ? { visibleFrom: tsToIso(d.visibleFrom) } : {}),
+    ...(Array.isArray(d.repeatDays) ? { repeatDays: d.repeatDays as RepeatDay[] } : {}),
+    ...(typeof d.repeatTime === "string" ? { repeatTime: d.repeatTime } : {}),
+    ...(typeof d.repeatWindowMs === "number" ? { repeatWindowMs: d.repeatWindowMs } : {}),
   };
 }
 
 function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
+  const extras = dispatchExtras(d);
   if (typeof d.recipientListPath === "string" && d.recipientListPath) {
     return {
       postId: id,
@@ -207,6 +243,7 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
       recipientListPath: d.recipientListPath,
       mailStorage: "personal_mail_dispatches",
       localeContents: localeContentsFromDoc(d.localeContents),
+      ...extras,
     };
   }
   const recipientMap = normalizeRecipientMapFromDoc(d.recipientUids);
@@ -226,6 +263,7 @@ function docToPostDocDispatch(id: string, d: DocumentData): PostDoc {
     recipientListPath: "",
     mailStorage: "personal_mail_dispatches",
     localeContents: localeContentsFromDoc(d.localeContents),
+    ...extras,
   };
 }
 
@@ -533,6 +571,11 @@ export async function POST(req: Request) {
       targetAudience?: "all" | "specific";
       recipientUids?: PostRecipientUidMap | string[];
       localeContents?: MailLocaleEntry[];
+      dispatchMode?: DispatchMode;
+      visibleFrom?: string;
+      repeatDays?: RepeatDay[];
+      repeatTime?: string;
+      repeatWindowMs?: number;
     };
 
     const { postType, title, content, sender, expiresAt } = body;
@@ -540,7 +583,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "필수 항목 누락" }, { status: 400 });
     }
 
-    // localeContents 정규화: 유효한 항목만, fallback 정확히 1개
     const rawLocale = Array.isArray(body.localeContents) ? body.localeContents : [];
     const localeContents: MailLocaleEntry[] = rawLocale
       .filter((e) => e && typeof e.language === "string" && e.language.trim())
@@ -550,7 +592,6 @@ export async function POST(req: Request) {
         content: String(e.content ?? ""),
         fallback: e.fallback === true,
       }));
-    // fallback이 없으면 첫 번째를 fallback으로
     if (localeContents.length > 0 && !localeContents.some((e) => e.fallback)) {
       localeContents[0]!.fallback = true;
     }
@@ -562,6 +603,7 @@ export async function POST(req: Request) {
       );
     }
 
+    const dispatchMode: DispatchMode = body.dispatchMode ?? "immediate";
     const targetAudience: "all" | "specific" =
       body.targetAudience === "specific" ? "specific" : "all";
 
@@ -573,6 +615,41 @@ export async function POST(req: Request) {
     const storedRewards = rewardsToStored(rewards);
     const senderStr = sender || "운영팀";
 
+    if (dispatchMode === "scheduled") {
+      if (!body.visibleFrom) {
+        return NextResponse.json({ ok: false, error: "예약 발송 시각(visibleFrom) 필수" }, { status: 400 });
+      }
+      const vf = new Date(body.visibleFrom);
+      if (isNaN(vf.getTime()) || vf <= now) {
+        return NextResponse.json({ ok: false, error: "예약 시각은 현재 이후여야 합니다." }, { status: 400 });
+      }
+    }
+    if (dispatchMode === "repeat") {
+      if (!body.repeatDays?.length || !body.repeatTime) {
+        return NextResponse.json({ ok: false, error: "반복 요일(repeatDays)과 시각(repeatTime) 필수" }, { status: 400 });
+      }
+    }
+
+    const visibleFromDate = body.visibleFrom ? new Date(body.visibleFrom) : null;
+    const repeatWindowMs =
+      typeof body.repeatWindowMs === "number" && isFinite(body.repeatWindowMs)
+        ? body.repeatWindowMs
+        : undefined;
+
+    function buildScheduleFields(): Record<string, unknown> {
+      const f: Record<string, unknown> = { dispatchMode };
+      if (dispatchMode === "scheduled" && visibleFromDate) {
+        f.visibleFrom = Timestamp.fromDate(visibleFromDate);
+      }
+      if (dispatchMode === "repeat") {
+        if (visibleFromDate) f.visibleFrom = Timestamp.fromDate(visibleFromDate);
+        if (body.repeatDays) f.repeatDays = body.repeatDays;
+        if (body.repeatTime) f.repeatTime = body.repeatTime;
+        if (repeatWindowMs != null) f.repeatWindowMs = repeatWindowMs;
+      }
+      return f;
+    }
+
     if (targetAudience === "all") {
       const mailId = makeGlobalMailId();
       const globalDoc: Record<string, unknown> = {
@@ -583,6 +660,7 @@ export async function POST(req: Request) {
         createdAt: Timestamp.fromDate(now),
         expiresAt: Timestamp.fromDate(expiresDate),
         rewards: storedRewards,
+        ...buildScheduleFields(),
       };
       if (localeContents.length > 0) globalDoc.localeContents = localeContents;
       await db.collection(COLLECTION_GLOBAL_MAILS).doc(mailId).set(globalDoc);
@@ -618,11 +696,11 @@ export async function POST(req: Request) {
       rewards: storedRewards,
       recipientListPath,
       recipientCount: uids.length,
+      ...buildScheduleFields(),
     };
     if (localeContents.length > 0) dispatchDoc.localeContents = localeContents;
     await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(mailId).set(dispatchDoc);
 
-    // 유저별 personal_list에 500건씩 batch 추가
     const listEntry: PersonalListEntry = {
       mailId,
       title,
@@ -631,6 +709,10 @@ export async function POST(req: Request) {
       expiresAt: Timestamp.fromDate(expiresDate),
       sender: senderStr,
       ...(localeContents.length > 0 ? { localeContents } : {}),
+      ...(visibleFromDate ? { visibleFrom: Timestamp.fromDate(visibleFromDate) } : {}),
+      ...(dispatchMode === "repeat" && body.repeatDays ? { repeatDays: body.repeatDays } : {}),
+      ...(dispatchMode === "repeat" && body.repeatTime ? { repeatTime: body.repeatTime } : {}),
+      ...(dispatchMode === "repeat" && repeatWindowMs != null ? { repeatWindowMs } : {}),
     };
     await writePersonalListBatch(db, uids, listEntry);
 

@@ -9,14 +9,12 @@ import {
   type MailLocaleEntry,
 } from "@/lib/firestore-mail-schema";
 import type { RewardEntry, PostTargetAudience, PostRecipientUidMap } from "@/app/api/admin/postbox/posts/route";
-import { uploadRecipientList } from "@/lib/mail-dispatches-storage";
-import { computeNextRunAt, type RepeatDay } from "@/lib/postbox-compute-next-run";
+import type { RepeatDay } from "@/lib/postbox-compute-next-run";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export type { RepeatDay };
-export { computeNextRunAt };
 export type MailScheduleJobType = "scheduled" | "repeat";
 export type MailScheduleJobStatus = "pending" | "processing" | "done" | "cancelled" | "failed";
 
@@ -44,142 +42,13 @@ export type MailScheduleJob = {
   mailStorage: "global_mails" | "personal_mail_dispatches";
 };
 
-function makeScheduleJobId(prefix: "gsj" | "psj"): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  return `${prefix}_${date}_${time}_${Math.random().toString(36).slice(2, 6)}`;
-}
-
 function tsToIso(v: unknown): string {
   if (v instanceof Timestamp) return v.toDate().toISOString();
   if (typeof v === "string") return v;
   return new Date(0).toISOString();
 }
 
-// ── POST: 스케줄 작업 생성 ────────────────────────────────────────────────────
-
-export async function POST(req: Request) {
-  try {
-    await requireAnyAuth(req);
-    const db = getFirestoreDb();
-    const body = await req.json() as {
-      dispatchType: "scheduled" | "repeat";
-      scheduledAt?: string;
-      repeatDays?: RepeatDay[];
-      repeatTime?: string;
-      postType?: string;
-      title: string;
-      content: string;
-      localeContents?: MailLocaleEntry[];
-      sender?: string;
-      expiresAfterMs: number;
-      rewards?: RewardEntry[];
-      targetAudience?: "all" | "specific";
-      recipientUids?: PostRecipientUidMap;
-    };
-
-    const { dispatchType, title, content, expiresAfterMs } = body;
-
-    if (!dispatchType || !["scheduled", "repeat"].includes(dispatchType)) {
-      return NextResponse.json({ ok: false, error: "dispatchType 오류" }, { status: 400 });
-    }
-    if (!title?.trim() || !content?.trim()) {
-      return NextResponse.json({ ok: false, error: "제목/내용 필수" }, { status: 400 });
-    }
-
-    const now = new Date();
-    let nextRunAt: Date;
-
-    if (dispatchType === "scheduled") {
-      if (!body.scheduledAt) {
-        return NextResponse.json({ ok: false, error: "scheduledAt 필수" }, { status: 400 });
-      }
-      nextRunAt = new Date(body.scheduledAt);
-      if (isNaN(nextRunAt.getTime()) || nextRunAt <= now) {
-        return NextResponse.json({ ok: false, error: "예약 시각은 현재 이후여야 합니다." }, { status: 400 });
-      }
-    } else {
-      if (!body.repeatDays?.length || !body.repeatTime) {
-        return NextResponse.json({ ok: false, error: "repeatDays/repeatTime 필수" }, { status: 400 });
-      }
-      nextRunAt = computeNextRunAt(body.repeatDays, body.repeatTime);
-    }
-
-    const targetAudience = body.targetAudience === "specific" ? "specific" : "all";
-    const localeContents = Array.isArray(body.localeContents) ? body.localeContents : [];
-    const rewards = Array.isArray(body.rewards) ? body.rewards : [];
-    const sender = body.sender || "운영팀";
-
-    // 공통 스케줄 필드
-    const scheduleFields: Record<string, unknown> = {
-      scheduleType: dispatchType,
-      scheduleStatus: "pending",
-      nextRunAt: Timestamp.fromDate(nextRunAt),
-      expiresAfterMs: typeof expiresAfterMs === "number" && isFinite(expiresAfterMs)
-        ? expiresAfterMs
-        : 7 * 24 * 60 * 60 * 1000,
-      runCount: 0,
-    };
-    if (dispatchType === "scheduled" && body.scheduledAt) {
-      scheduleFields.scheduledAt = Timestamp.fromDate(new Date(body.scheduledAt));
-    }
-    if (dispatchType === "repeat") {
-      scheduleFields.repeatDays = body.repeatDays;
-      scheduleFields.repeatTime = body.repeatTime;
-    }
-
-    if (targetAudience === "all") {
-      const jobId = makeScheduleJobId("gsj");
-      const doc: Record<string, unknown> = {
-        title: title.trim(),
-        content,
-        sender,
-        isActive: false,
-        createdAt: Timestamp.fromDate(now),
-        // expiresAt은 발송 시점에 계산 — 임시값으로 nextRunAt 사용
-        expiresAt: Timestamp.fromDate(nextRunAt),
-        rewards,
-        ...(localeContents.length > 0 ? { localeContents } : {}),
-        ...scheduleFields,
-      };
-      await db.collection(COLLECTION_GLOBAL_MAILS).doc(jobId).set(doc);
-      return NextResponse.json({ ok: true, jobId });
-    }
-
-    // specific
-    const rawMap = body.recipientUids ?? {};
-    const uids = Object.keys(rawMap);
-    if (uids.length === 0) {
-      return NextResponse.json({ ok: false, error: "recipientUids 필요" }, { status: 400 });
-    }
-
-    const jobId = makeScheduleJobId("psj");
-    const recipients = uids.map((uid) => ({ uid, displayName: (rawMap as Record<string, string>)[uid] ?? "" }));
-    const recipientListPath = await uploadRecipientList(jobId, recipients);
-
-    const doc: Record<string, unknown> = {
-      title: title.trim(),
-      content,
-      sender,
-      isActive: false,
-      createdAt: Timestamp.fromDate(now),
-      expiresAt: Timestamp.fromDate(nextRunAt),
-      rewards,
-      recipientListPath,
-      recipientCount: uids.length,
-      ...(localeContents.length > 0 ? { localeContents } : {}),
-      ...scheduleFields,
-    };
-    await db.collection(COLLECTION_PERSONAL_MAIL_DISPATCHES).doc(jobId).set(doc);
-    return NextResponse.json({ ok: true, jobId });
-  } catch (e) {
-    return jsonStorageError(e);
-  }
-}
-
-// ── GET: 스케줄 작업 목록 조회 ────────────────────────────────────────────────
+// ── GET: 레거시 스케줄 작업 목록 조회 (gsj_*/psj_* 구 데이터용) ─────────────────
 
 export async function GET(req: Request) {
   try {
