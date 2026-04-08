@@ -1077,7 +1077,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
   const [scheduledAtDate, setScheduledAtDate] = useState<Date>(() => initialScheduledAtDate());
   const [repeatDays, setRepeatDays] = useState<RepeatDay[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
   const [repeatTime, setRepeatTime] = useState<string>("09:00");
-  const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("ko", true)]);
+  const [langRows, setLangRows] = useState<LangRow[]>(() => [makeLangRow("en", true)]);
   const [langActiveId, setLangActiveId] = useState<string | null>(null);
   const [pendingLangAdd, setPendingLangAdd] = useState<{ code: string } | null>(null);
 

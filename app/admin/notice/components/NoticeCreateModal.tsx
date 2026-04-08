@@ -141,7 +141,7 @@ export function NoticeCreateModal({
   const [noticeName, setNoticeName] = useState("");
   const [postSchedule, setPostSchedule] = useState<NoticePostSchedule>("immediate");
   const [postingAtDate, setPostingAtDate] = useState<Date>(() => initialScheduledAtDate());
-  const [rows, setRows] = useState<LocaleRow[]>(() => [makeRow("ko", true)]);
+  const [rows, setRows] = useState<LocaleRow[]>(() => [makeRow("en", true)]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingLangAdd, setPendingLangAdd] = useState<{ code: string } | null>(null);
 
@@ -171,7 +171,7 @@ export function NoticeCreateModal({
     setIsPublic(n.isPublic === "y");
     const ordered = orderedLocaleRowsForEdit(n.contents ?? []);
     if (ordered.length === 0) {
-      setRows([makeRow("ko", true)]);
+      setRows([makeRow("en", true)]);
       setActiveId(null);
     } else {
       const globalAuthor = (n.author || "운영자").slice(0, 80);

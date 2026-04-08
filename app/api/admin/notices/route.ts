@@ -54,7 +54,7 @@ function localeFromUnknown(raw: unknown): NoticeLocaleEntry | null {
   const language =
     typeof o.language === "string" && o.language.trim()
       ? o.language.trim().slice(0, 16)
-      : "kr";
+      : "en";
   return {
     language,
     title: typeof o.title === "string" ? o.title : "",
@@ -75,7 +75,7 @@ function normalizeContentsFromDoc(d: DocumentData): NoticeLocaleEntry[] {
   if (c != null && typeof c === "object" && !Array.isArray(c)) {
     const o = c as Record<string, unknown>;
     const one = localeFromUnknown({
-      language: o.language ?? "kr",
+      language: o.language ?? "en",
       title: o.title,
       content: o.content,
       imageKey: o.imageKey ?? "",
