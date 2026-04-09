@@ -308,20 +308,10 @@ export function PostboxClient() {
 
   // ── Filtering & pagination ─────────────────────────────────────────────────
 
-  const postsByDispatchMode = useMemo(() => {
-    const immediate: PostDoc[] = [];
-    const repeat: PostDoc[] = [];
-    for (const p of posts) {
-      if (p.dispatchMode === "repeat") repeat.push(p);
-      else immediate.push(p);
-    }
-    return { immediate, repeat };
-  }, [posts]);
-
   const postsForActiveTab = useMemo(() => {
-    if (activeTab === "repeat") return postsByDispatchMode.repeat;
-    return postsByDispatchMode.immediate;
-  }, [activeTab, postsByDispatchMode]);
+    if (activeTab === "repeat") return posts.filter((p) => p.dispatchMode === "repeat");
+    return posts.filter((p) => p.dispatchMode !== "repeat");
+  }, [activeTab, posts]);
 
   const filtered = useMemo(() => {
     const base = postsForActiveTab;
@@ -646,11 +636,11 @@ export function PostboxClient() {
                       <AdminTableResizeHandle ariaLabel={POSTBOX_COL_RESIZE_LABELS[3]!} onMouseDown={(e) => startPostColResize(3, e.clientX)} />
                     </th>
                     <th style={{ ...postThPad(postTbl.columnPadding.sender.th), ...adminListColBox(postColW[4]!), textAlign: "center", position: "relative", overflow: "hidden" }}>
-                      {"수신 인원"}
+                      수신 인원
                       <AdminTableResizeHandle ariaLabel={POSTBOX_COL_RESIZE_LABELS[4]!} onMouseDown={(e) => startPostColResize(4, e.clientX)} />
                     </th>
                     <th style={{ ...thStyle, ...adminListColBox(postColW[5]!), textAlign: "center", position: "relative", overflow: "hidden", padding: postTbl.scheduleRepeatThPadding }}>
-                      {"반복 조건"}
+                      반복 조건
                       <AdminTableResizeHandle ariaLabel={POSTBOX_COL_RESIZE_LABELS[5]!} onMouseDown={(e) => startPostColResize(5, e.clientX)} />
                     </th>
                     <th style={{ ...postThPad(postTbl.columnPadding.sentAt.th), ...adminListColBox(postColW[6]!), textAlign: "center", position: "relative", overflow: "hidden" }}>

@@ -29,6 +29,7 @@ import { useChartChangeSignal } from "@/app/admin/spec/hooks/useChartChangeSigna
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
+import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
 import { computeNextRunAt, repeatKstToUtc, type RepeatDay } from "@/lib/postbox-compute-next-run";
 import type { DispatchMode } from "@/lib/firestore-mail-schema";
 
@@ -48,7 +49,6 @@ function closeDatePickerIfReselect(
   }
 }
 
-const EXPIRY_DATE_FORMAT = "yyyy'년 'M'월 'd'일 ('EEE')' HH:mm";
 const expiryDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
 
 /** 우편 목록·차트 관리와 동일 (AdminGlobalLoadingOverlay 문구) */
@@ -1110,8 +1110,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     setExpiryPreset((p) => (p === "custom" ? "7" : p));
   }, [dispatchType]);
 
-  /** 반복 발송 시각 피커: 오늘(UTC) 날짜 + repeatTime — 표시용, API는 HH:mm(UTC)만 사용 */
-
   const customExpiryFloor = useMemo(
     () => expiryPickerFloor(dispatchType, repeatDays, repeatTime),
     [dispatchType, repeatDays, repeatTime],
@@ -1592,7 +1590,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                   locale="ko"
                   showTimeSelect
                   timeIntervals={1}
-                  dateFormat={EXPIRY_DATE_FORMAT}
+                  dateFormat={SCHEDULED_AT_DISPLAY_FORMAT}
                   timeFormat="HH:mm"
                   timeCaption="시각"
                   minDate={startOfLocalDay(customExpiryFloor)}
