@@ -29,7 +29,6 @@ import { useResizableAdminTableColumns } from "@/lib/use-resizable-admin-table-c
 import { usePostboxChangeSignal } from "./hooks/usePostboxChangeSignal";
 import { signalPostboxChange } from "@/lib/firestore-postbox-signal";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
-import { formatScheduledAtKo } from "@/lib/format-scheduled-at-ko";
 import { repeatUtcToKst, type RepeatDay } from "@/lib/postbox-compute-next-run";
 import { orderRegionsGlobalFirst } from "@/lib/admin-region-order";
 
@@ -49,24 +48,20 @@ const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type PostboxTab = "admin" | "scheduled" | "repeat" | "user" | "leaderboard";
+type PostboxTab = "admin" | "repeat" | "user" | "leaderboard";
 
 const TAB_POST_TYPE: Record<PostboxTab, PostType> = {
   admin: "Admin",
-  scheduled: "Admin",
   repeat: "Admin",
   user: "User",
   leaderboard: "Leaderboard",
 };
 
-type PostboxStatus = "활성" | "만료" | "비활성" | "예약중";
+type PostboxStatus = "활성" | "만료" | "비활성";
 
 function resolveStatus(post: PostDoc): PostboxStatus {
   if (!post.isActive) return "비활성";
   const now = new Date();
-  if (post.dispatchMode === "scheduled" && post.visibleFrom) {
-    if (new Date(post.visibleFrom) > now) return "예약중";
-  }
   if (post.dispatchMode === "repeat") {
     return "활성";
   }
@@ -85,7 +80,6 @@ function formatTarget(post: PostDoc): string {
 
 const TAB_LABELS: { id: PostboxTab; label: string }[] = [
   { id: "admin", label: "즉시 발송" },
-  { id: "scheduled", label: "예약 우편" },
   { id: "repeat", label: "반복 우편" },
   { id: "user", label: "유저 우편" },
   { id: "leaderboard", label: "리더보드 보상" },
@@ -118,7 +112,6 @@ function StatusBadge({ status }: { status: PostboxStatus }) {
     whiteSpace: "nowrap",
   };
   if (status === "활성") return <span style={{ ...base, background: "rgba(5,150,105,0.10)", color: "#059669" }}>활성</span>;
-  if (status === "예약중") return <span style={{ ...base, background: "rgba(245,158,11,0.10)", color: "#d97706" }}>예약중</span>;
   if (status === "만료") return <span style={{ ...base, background: "rgba(100,116,139,0.10)", color: "#64748b" }}>만료</span>;
   return <span style={{ ...base, background: "rgba(239,68,68,0.08)", color: "#dc2626" }}>비활성</span>;
 }
@@ -193,7 +186,7 @@ export function PostboxClient() {
   }, []);
 
   useEffect(() => {
-    if (!bootstrapped || (activeTab !== "repeat" && activeTab !== "scheduled")) return;
+    if (!bootstrapped || activeTab !== "repeat") return;
     void fetchScheduleJobs({ soft: scheduleFetchedRef.current });
   }, [bootstrapped, activeTab, fetchScheduleJobs]);
 
@@ -317,18 +310,15 @@ export function PostboxClient() {
 
   const postsByDispatchMode = useMemo(() => {
     const immediate: PostDoc[] = [];
-    const scheduled: PostDoc[] = [];
     const repeat: PostDoc[] = [];
     for (const p of posts) {
-      if (p.dispatchMode === "scheduled") scheduled.push(p);
-      else if (p.dispatchMode === "repeat") repeat.push(p);
+      if (p.dispatchMode === "repeat") repeat.push(p);
       else immediate.push(p);
     }
-    return { immediate, scheduled, repeat };
+    return { immediate, repeat };
   }, [posts]);
 
   const postsForActiveTab = useMemo(() => {
-    if (activeTab === "scheduled") return postsByDispatchMode.scheduled;
     if (activeTab === "repeat") return postsByDispatchMode.repeat;
     return postsByDispatchMode.immediate;
   }, [activeTab, postsByDispatchMode]);
@@ -365,8 +355,8 @@ export function PostboxClient() {
   }, [page, totalPages]);
 
   const scheduleJobsForActiveTab = useMemo(() => {
-    if (activeTab !== "scheduled" && activeTab !== "repeat") return [];
-    return scheduleJobs.filter((j) => j.type === (activeTab === "scheduled" ? "scheduled" : "repeat"));
+    if (activeTab !== "repeat") return [];
+    return scheduleJobs.filter((j) => j.type === "repeat");
   }, [scheduleJobs, activeTab]);
 
   const filteredScheduleJobs = useMemo(() => {
@@ -581,7 +571,7 @@ export function PostboxClient() {
                 >
                   삭제
                 </button>
-                {(activeTab === "admin" || activeTab === "scheduled" || activeTab === "repeat") && (
+                {(activeTab === "admin" || activeTab === "repeat") && (
                   <div style={{ position: "relative" }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none" }}>
                       <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -600,7 +590,7 @@ export function PostboxClient() {
                   type="button"
                   onClick={() => {
                     void fetchPosts();
-                    if ((activeTab === "scheduled" || activeTab === "repeat") && hasLegacyScheduleJobs) void fetchScheduleJobs();
+                    if (activeTab === "repeat" && hasLegacyScheduleJobs) void fetchScheduleJobs();
                   }}
                   disabled={loading}
                   title="새로고침"
@@ -622,8 +612,8 @@ export function PostboxClient() {
             </div>
           )}
 
-          {/* Schedule / Repeat 탭 — 새 posts + 레거시 schedule jobs */}
-          {(activeTab === "repeat" || activeTab === "scheduled") && !fetchError && (
+          {/* Repeat 탭 — 새 posts + 레거시 schedule jobs */}
+          {activeTab === "repeat" && !fetchError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table style={{ width: "100%", minWidth: postTableMinW, tableLayout: "fixed", borderCollapse: "collapse", fontSize: 13 }}>
                 <colgroup>
@@ -656,11 +646,11 @@ export function PostboxClient() {
                       <AdminTableResizeHandle ariaLabel={POSTBOX_COL_RESIZE_LABELS[3]!} onMouseDown={(e) => startPostColResize(3, e.clientX)} />
                     </th>
                     <th style={{ ...postThPad(postTbl.columnPadding.sender.th), ...adminListColBox(postColW[4]!), textAlign: "center", position: "relative", overflow: "hidden" }}>
-                      {activeTab === "scheduled" ? "발송인" : "수신 인원"}
+                      {"수신 인원"}
                       <AdminTableResizeHandle ariaLabel={POSTBOX_COL_RESIZE_LABELS[4]!} onMouseDown={(e) => startPostColResize(4, e.clientX)} />
                     </th>
                     <th style={{ ...thStyle, ...adminListColBox(postColW[5]!), textAlign: "center", position: "relative", overflow: "hidden", padding: postTbl.scheduleRepeatThPadding }}>
-                      {activeTab === "scheduled" ? "예약 시각" : "반복 조건"}
+                      {"반복 조건"}
                       <AdminTableResizeHandle ariaLabel={POSTBOX_COL_RESIZE_LABELS[5]!} onMouseDown={(e) => startPostColResize(5, e.clientX)} />
                     </th>
                     <th style={{ ...postThPad(postTbl.columnPadding.sentAt.th), ...adminListColBox(postColW[6]!), textAlign: "center", position: "relative", overflow: "hidden" }}>
@@ -678,7 +668,7 @@ export function PostboxClient() {
                 </thead>
                 <tbody>
                   {filtered.length === 0 && !hasLegacyScheduleJobs ? (
-                    <tr><td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>{search ? "검색 결과가 없습니다." : activeTab === "scheduled" ? "등록된 예약 우편이 없습니다." : "등록된 반복 우편이 없습니다."}</td></tr>
+                    <tr><td colSpan={9} style={{ padding: "40px 0", textAlign: "center", color: "#94a3b8", fontSize: 14 }}>{search ? "검색 결과가 없습니다." : "등록된 반복 우편이 없습니다."}</td></tr>
                   ) : (
                     <>
                       {pageItems.map((item, idx) => {
@@ -690,9 +680,7 @@ export function PostboxClient() {
                           : null;
                         const repeatLabel = kst
                           ? `${kst.kstDays.map((d) => dayMap[d] ?? d).join(" ")} ${kst.kstTime}`
-                          : activeTab === "scheduled" && item.visibleFrom
-                            ? formatScheduledAtKo(new Date(item.visibleFrom))
-                            : "—";
+                          : "—";
                         const expireDisplay = item.dispatchMode === "repeat" ? "무기한" : new Date(item.expiresAt).toLocaleDateString("ko-KR");
                         return (
                           <tr key={item.postId} onClick={() => setReceiptPost(item)} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#fff" : "#fafafa", cursor: "pointer" }}>
@@ -702,7 +690,7 @@ export function PostboxClient() {
                             <td style={{ ...tdStyle, ...adminListColBox(postColW[1]!), textAlign: "center", color: "#94a3b8", fontSize: 11, padding: postTbl.numberTdPadding }}>{(page - 1) * pageSize + idx + 1}</td>
                             <td style={{ ...postTdPad(postTbl.columnPadding.title.td), ...adminListColBox(postColW[2]!), fontWeight: 600, color: "#1e293b", maxWidth: postTbl.titleMaxWidth, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</td>
                             <td style={{ ...postTdPad(postTbl.columnPadding.target.td), ...adminListColBox(postColW[3]!), textAlign: "center", color: "#475569", fontSize: 12 }}>{formatTarget(item)}</td>
-                            <td style={{ ...postTdPad(postTbl.columnPadding.sender.td), ...adminListColBox(postColW[4]!), textAlign: "center", color: "#475569", fontSize: 12 }}>{activeTab === "scheduled" ? (item.sender || "—") : formatTarget(item)}</td>
+                            <td style={{ ...postTdPad(postTbl.columnPadding.sender.td), ...adminListColBox(postColW[4]!), textAlign: "center", color: "#475569", fontSize: 12 }}>{formatTarget(item)}</td>
                             <td style={{ ...postTdPad(postTbl.columnPadding.sentAt.td), ...adminListColBox(postColW[5]!), textAlign: "center", verticalAlign: "middle", color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", padding: postTbl.scheduleRepeatTdPadding }}>{repeatLabel}</td>
                             <td style={{ ...postTdPad(postTbl.columnPadding.sentAt.td), ...adminListColBox(postColW[6]!), textAlign: "center", color: "#475569", fontSize: 12, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{new Date(item.createdAt).toLocaleDateString("ko-KR")}</td>
                             <td style={{ ...postTdPad(postTbl.columnPadding.expiresAt.td), ...adminListColBox(postColW[7]!), textAlign: "center", color: "#475569", fontSize: 12, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{expireDisplay}</td>
@@ -745,7 +733,7 @@ export function PostboxClient() {
           )}
 
           {/* Admin Table */}
-          {activeTab !== "repeat" && activeTab !== "scheduled" && !fetchError && (
+          {activeTab !== "repeat" && !fetchError && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
               <table
                 style={{

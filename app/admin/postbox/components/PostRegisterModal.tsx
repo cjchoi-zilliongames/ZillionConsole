@@ -29,7 +29,6 @@ import { useChartChangeSignal } from "@/app/admin/spec/hooks/useChartChangeSigna
 import { useAdminSession } from "@/app/admin/hooks/useAdminSession";
 import { AdminGlobalLoadingOverlay } from "@/app/admin/components/AdminGlobalLoadingOverlay";
 import { isPostboxItemChartPayload } from "@/lib/spec/postbox-item-chart";
-import { SCHEDULED_AT_DISPLAY_FORMAT } from "@/lib/format-scheduled-at-ko";
 import { computeNextRunAt, repeatKstToUtc, type RepeatDay } from "@/lib/postbox-compute-next-run";
 import type { DispatchMode } from "@/lib/firestore-mail-schema";
 
@@ -49,8 +48,8 @@ function closeDatePickerIfReselect(
   }
 }
 
-/** 예약 시각 피커: 입력 왼쪽 정렬 + 살짝 왼쪽으로 당김 */
-const scheduleDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
+const EXPIRY_DATE_FORMAT = "yyyy'년 'M'월 'd'일 ('EEE')' HH:mm";
+const expiryDatePickerPopperModifiers = [offset({ mainAxis: 10, crossAxis: -48 })];
 
 /** 우편 목록·차트 관리와 동일 (AdminGlobalLoadingOverlay 문구) */
 const ADMIN_DATA_LOADING_MESSAGE = "데이터 불러오는 중…";
@@ -180,19 +179,12 @@ function headersRowToMap(headers: string[], row: string[]): Record<string, strin
 }
 
 
-type DispatchType = "immediate" | "scheduled" | "repeat";
+type DispatchType = "immediate" | "repeat";
 
 const REPEAT_DAY_LABELS: Record<RepeatDay, string> = {
   Mon: "월", Tue: "화", Wed: "수", Thu: "목", Fri: "금", Sat: "토", Sun: "일",
 };
 const ALL_REPEAT_DAYS: RepeatDay[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-/** 예약 허용 최소 시각: 지금 시점 기준 “다음 분” 시작(초·ms 0) */
-function scheduledEarliestAllowedDate(): Date {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + 1, 0, 0);
-  return d;
-}
 
 function startOfLocalDay(d: Date): Date {
   const x = new Date(d);
@@ -200,43 +192,22 @@ function startOfLocalDay(d: Date): Date {
   return x;
 }
 
-/** 예약 시각을 허용 바닥 이상으로 맞춤(초·ms 0) */
-function clampScheduledDate(d: Date): Date {
-  const floor = scheduledEarliestAllowedDate();
-  const x = new Date(d);
-  x.setSeconds(0, 0);
-  if (x.getTime() < floor.getTime()) return new Date(floor);
-  return x;
-}
-
-function initialScheduledAtDate(): Date {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + 5, 0, 0);
-  return clampScheduledDate(d);
-}
-
-/** 만료 직접 입력 DatePicker 하한: 즉시=지금+1분, 예약=발송+1분, 반복=첫 실행+1분(각각 현재 시각 하한과 max) */
+/** 만료 직접 입력 DatePicker 하한: 즉시=지금+1분, 반복=첫 실행+1분 */
 function expiryPickerFloor(
   dispatchType: DispatchType,
-  scheduledAt: Date,
   repeatDays: RepeatDay[],
   repeatTime: string,
 ): Date {
-  const nowFloor = scheduledEarliestAllowedDate();
+  const now = new Date();
+  now.setMinutes(now.getMinutes() + 1, 0, 0);
   if (dispatchType === "immediate") {
-    return nowFloor;
-  }
-  if (dispatchType === "scheduled") {
-    const s = new Date(scheduledAt);
-    s.setSeconds(0, 0);
-    const afterSend = new Date(s.getTime() + 60 * 1000);
-    return new Date(Math.max(nowFloor.getTime(), afterSend.getTime()));
+    return now;
   }
   const { utcTime, utcDays } = repeatKstToUtc(repeatTime, repeatDays);
   const next = computeNextRunAt(utcDays, utcTime);
   next.setSeconds(0, 0);
   const afterFirst = new Date(next.getTime() + 60 * 1000);
-  return new Date(Math.max(nowFloor.getTime(), afterFirst.getTime()));
+  return new Date(Math.max(now.getTime(), afterFirst.getTime()));
 }
 
 function clampCustomExpiryToFloor(d: Date, floor: Date): Date {
@@ -1077,7 +1048,6 @@ function RewardDetailModal({ reward, onClose }: { reward: RewardItem; onClose: (
 
 export function PostRegisterModal({ onClose, onCreated }: Props) {
   const [dispatchType, setDispatchType] = useState<DispatchType>("immediate");
-  const [scheduledAtDate, setScheduledAtDate] = useState<Date>(() => initialScheduledAtDate());
   const [repeatDays, setRepeatDays] = useState<RepeatDay[]>(["Mon", "Tue", "Wed", "Thu", "Fri"]);
   const [repeatTime, setRepeatTime] = useState<string>("09:00");
   const [regionRows, setRegionRows] = useState<RegionRow[]>(() => [makeRegionRow(REGION_GLOBAL)]);
@@ -1106,7 +1076,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
   const { bootstrapped } = useAdminSession();
 
-  const scheduledPickerRef = useRef<DatePickerInstance>(null);
   const expiryPickerRef = useRef<DatePickerInstance>(null);
 
   const loadPostboxCharts = useCallback(async () => {
@@ -1135,27 +1104,17 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     void loadPostboxCharts();
   }, bootstrapped);
 
-  // 예약 발송: 탭 전환 시 최소 시각 미만이면 올림
-  useEffect(() => {
-    if (dispatchType !== "scheduled") return;
-    setScheduledAtDate((prev) => clampScheduledDate(prev));
-  }, [dispatchType]);
-
   // 반복 발송: 만료는 기간(일) 토글만 — 만료 시각 피커 비활성, custom이면 프리셋으로 복귀
   useEffect(() => {
     if (dispatchType !== "repeat") return;
     setExpiryPreset((p) => (p === "custom" ? "7" : p));
   }, [dispatchType]);
 
-  const filterScheduledTime = useCallback((time: Date) => {
-    return time.getTime() >= scheduledEarliestAllowedDate().getTime();
-  }, []);
-
   /** 반복 발송 시각 피커: 오늘(UTC) 날짜 + repeatTime — 표시용, API는 HH:mm(UTC)만 사용 */
 
   const customExpiryFloor = useMemo(
-    () => expiryPickerFloor(dispatchType, scheduledAtDate, repeatDays, repeatTime),
-    [dispatchType, scheduledAtDate, repeatDays, repeatTime],
+    () => expiryPickerFloor(dispatchType, repeatDays, repeatTime),
+    [dispatchType, repeatDays, repeatTime],
   );
 
   const filterCustomExpiryTime = useCallback(
@@ -1343,8 +1302,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     let d: Date;
     if (dispatchType === "immediate") {
       d = new Date(computeExpiresAt());
-    } else if (dispatchType === "scheduled") {
-      d = new Date(scheduledAtDate.getTime() + computeExpiresAfterMs());
     } else {
       const rep = repeatKstToUtc(repeatTime, repeatDays);
       d = new Date(
@@ -1358,7 +1315,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     customExpirySelected,
     customExpiryFloor,
     dispatchType,
-    scheduledAtDate,
     repeatDays,
     repeatTime,
   ]);
@@ -1367,29 +1323,9 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
     e.preventDefault();
     setError(null);
 
-    if (dispatchType === "scheduled") {
-      const scheduledDate = scheduledAtDate;
-      const floor = scheduledEarliestAllowedDate();
-      if (!scheduledDate || scheduledDate.getTime() < floor.getTime()) {
-        setError("예약 발송 시각은 현재 시각 이후(최소 1분 뒤)여야 합니다.");
-        return;
-      }
-    }
     if (dispatchType === "repeat" && repeatDays.length === 0) {
       setError("반복 주기에서 요일을 최소 하나 선택해 주세요.");
       return;
-    }
-
-    if (expiryPreset === "custom" && dispatchType === "scheduled") {
-      const customEnd = new Date(customExpiry).getTime();
-      if (!Number.isFinite(customEnd)) {
-        setError("만료 시각(직접 입력)을 올바르게 설정해 주세요.");
-        return;
-      }
-      if (customEnd <= scheduledAtDate.getTime()) {
-        setError("만료 시각은 발송 시각보다 이후여야 합니다.");
-        return;
-      }
     }
 
     if (submitDisabledReason) return;
@@ -1426,13 +1362,6 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
 
     if (dispatchType === "immediate") {
       expiresAtIso = new Date(computeExpiresAt()).toISOString();
-    } else if (dispatchType === "scheduled") {
-      visibleFromIso = scheduledAtDate.toISOString();
-      if (expiryPreset === "custom") {
-        expiresAtIso = new Date(customExpiry).toISOString();
-      } else {
-        expiresAtIso = new Date(scheduledAtDate.getTime() + computeExpiresAfterMs()).toISOString();
-      }
     } else {
       const { utcTime, utcDays } = repeatKstToUtc(repeatTime, repeatDays);
       visibleFromIso = computeNextRunAt(utcDays, utcTime).toISOString();
@@ -1479,7 +1408,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
       setSubmitting(false);
     }
   }, [
-    dispatchType, scheduledAtDate, repeatDays, repeatTime,
+    dispatchType, repeatDays, repeatTime,
     regionRows, expiryPreset, customExpiry,
     rewards, audienceMode, pickedUsers, onCreated,
   ]);
@@ -1558,44 +1487,12 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                   <ToggleBtn active={dispatchType === "immediate"} onClick={() => setDispatchType("immediate")}>
                     즉시 발송
                   </ToggleBtn>
-                  <ToggleBtn active={dispatchType === "scheduled"} onClick={() => setDispatchType("scheduled")}>
-                    예약 발송
-                  </ToggleBtn>
                   <ToggleBtn active={dispatchType === "repeat"} onClick={() => setDispatchType("repeat")}>
                     반복 발송
                   </ToggleBtn>
                 </div>
               </div>
               <div style={{ minWidth: 0 }}>
-                {dispatchType === "scheduled" && (
-                  <>
-                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
-                      발송 시각
-                    </label>
-                    <DatePicker
-                      ref={scheduledPickerRef}
-                      selected={scheduledAtDate}
-                      onChange={(d: Date | null) => {
-                        if (d) setScheduledAtDate(clampScheduledDate(d));
-                      }}
-                      onSelect={(d) => closeDatePickerIfReselect(scheduledPickerRef, scheduledAtDate, d)}
-                      locale="ko"
-                      showTimeSelect
-                      timeIntervals={1}
-                      dateFormat={SCHEDULED_AT_DISPLAY_FORMAT}
-                      timeFormat="HH:mm"
-                      timeCaption="시각"
-                      minDate={startOfLocalDay(new Date())}
-                      filterTime={filterScheduledTime}
-                      popperPlacement="bottom-start"
-                      popperModifiers={scheduleDatePickerPopperModifiers}
-                      showPopperArrow={false}
-                      popperClassName="post-register-datepicker-popper"
-                      wrapperClassName="post-register-datepicker-wrap"
-                      className="post-register-datepicker-input"
-                    />
-                  </>
-                )}
                 {dispatchType === "repeat" && (
                   <>
                     <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#334155", marginBottom: 6 }}>
@@ -1695,13 +1592,13 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                   locale="ko"
                   showTimeSelect
                   timeIntervals={1}
-                  dateFormat={SCHEDULED_AT_DISPLAY_FORMAT}
+                  dateFormat={EXPIRY_DATE_FORMAT}
                   timeFormat="HH:mm"
                   timeCaption="시각"
                   minDate={startOfLocalDay(customExpiryFloor)}
                   filterTime={filterCustomExpiryTime}
                   popperPlacement="bottom-start"
-                  popperModifiers={scheduleDatePickerPopperModifiers}
+                  popperModifiers={expiryDatePickerPopperModifiers}
                   showPopperArrow={false}
                   popperClassName="post-register-datepicker-popper"
                   wrapperClassName="post-register-datepicker-wrap"
@@ -2207,7 +2104,7 @@ export function PostRegisterModal({ onClose, onCreated }: Props) {
                 opacity: submitDisabledReason ? 0.6 : 1,
               }}
             >
-              {submitting ? "등록 중…" : dispatchType === "immediate" ? "즉시 발송" : dispatchType === "scheduled" ? "예약 등록" : "반복 등록"}
+              {submitting ? "등록 중…" : dispatchType === "immediate" ? "즉시 발송" : "반복 등록"}
             </button>
           </div>
         </form>
