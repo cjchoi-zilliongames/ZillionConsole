@@ -153,10 +153,8 @@ export function SheetsImportModal({
     setImportError(null);
     setStep("importing");
     onBusyChange?.(true);
-    onClose();
 
     try {
-      // 1. Apps Script에서 CSV 데이터 받기
       const res = await callScript({
         action: "export",
         spreadsheetId: selectedFile!.id,
@@ -165,7 +163,6 @@ export function SheetsImportModal({
       if (!res.ok) throw new Error(res.error ?? "CSV 변환 실패");
       const csvFiles = (res.data?.csvFiles as { name: string; content: string }[]) ?? [];
 
-      // 2. 폴더 생성 (기존 로직 그대로)
       let actualPath: string;
       do {
         const buf = new Uint8Array(4);
@@ -178,7 +175,6 @@ export function SheetsImportModal({
       const updatedNames = { ...folderNames, [folderPrefix]: displayName.trim() };
       setFolderNames(updatedNames);
 
-      // 3. CSV 업로드 (기존 service.uploadFiles 재활용)
       for (const csv of csvFiles) {
         const file = new File(
           [new TextEncoder().encode(csv.content)],
@@ -190,7 +186,6 @@ export function SheetsImportModal({
         ]);
       }
 
-      // 4. 매니페스트 갱신 + 인벤토리 새로고침 (기존 로직 그대로)
       const folderRootsHint = [...new Set([...folders, folderPrefix])];
       const liveVirtual = liveFolder
         ? (updatedNames[liveFolder]?.trim() || liveFolder.replace(/\/$/, ""))
@@ -202,6 +197,7 @@ export function SheetsImportModal({
 
       onBusyChange?.(false);
       onDone({ count: csvFiles.length, folderName: displayName.trim() });
+      onClose();
     } catch (e) {
       onBusyChange?.(false);
       setImportError(e instanceof Error ? e.message : "내보내기 실패");
