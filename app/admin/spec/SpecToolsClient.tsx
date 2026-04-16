@@ -30,6 +30,7 @@ import { LiveRouteChangeDialog } from "./components/LiveRouteChangeDialog";
 import { DeleteFolderDialog } from "./components/DeleteFolderDialog";
 import { RenameFolderDialog } from "./components/RenameFolderDialog";
 import { CSVPreviewModal } from "./components/CSVPreviewModal";
+import { SheetsImportModal } from "./components/SheetsImportModal";
 import { ChatBot } from "./components/ChatBot";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { BulkActionToast, type BulkToastTone } from "./components/BulkActionToast";
@@ -106,6 +107,7 @@ export function SpecToolsClient() {
   // ── Local UI state ──────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [sheetsImportOpen, setSheetsImportOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteModalFiles, setDeleteModalFiles] = useState<InventoryFile[]>([]);
   const [moveModalFiles, setMoveModalFiles] = useState<InventoryFile[]>([]);
@@ -407,6 +409,7 @@ export function SpecToolsClient() {
 
   const versionFolderHotkeysBlocked =
     uploadOpen ||
+    sheetsImportOpen ||
     moveModalFiles.length > 0 ||
     deleteModalOpen ||
     !!folderOps.renameFolderTarget ||
@@ -561,6 +564,7 @@ export function SpecToolsClient() {
                 onDeleteFromContext={(folder) => folderOps.openDeleteFolder(folder, selectedFolder, setSelectedFolder)}
                 applyFolderDisplayRename={applyFolderDisplayRenameWithToast}
                 versionFolderHotkeysBlocked={versionFolderHotkeysBlocked}
+                onSheetsImport={() => setSheetsImportOpen(true)}
               />
 
               {/* ── Main content ── */}
@@ -617,6 +621,16 @@ export function SpecToolsClient() {
           onClose={() => setUploadOpen(false)}
           onUploadComplete={() => refreshInventory({ soft: true }).then(() => {})}
           onUploadSuccess={({ count }) => showBulkToast(`업로드 완료: ${count}개`)}
+        />
+      )}
+
+      {sheetsImportOpen && (
+        <SheetsImportModal
+          onClose={() => setSheetsImportOpen(false)}
+          onDone={() => {
+            void refreshInventory({ soft: true });
+            showBulkToast("Google Sheets 가져오기 완료");
+          }}
         />
       )}
 

@@ -55,6 +55,7 @@ type FolderSidebarProps = {
   applyFolderDisplayRename: (folder: string, rawNewDisplay: string) => string | null;
   /** 열려 있는 모달·다이얼로그 등 있을 때 F2 비활성 */
   versionFolderHotkeysBlocked?: boolean;
+  onSheetsImport?: () => void;
 };
 
 export function FolderSidebar({
@@ -67,6 +68,7 @@ export function FolderSidebar({
   onRequestLiveChange, onMergeToLive, onShowDetail, onRenameFolder, onDeleteFromContext,
   applyFolderDisplayRename,
   versionFolderHotkeysBlocked = false,
+  onSheetsImport,
 }: FolderSidebarProps) {
   const [inlineEditingFolder, setInlineEditingFolder] = useState<string | null>(null);
   const [inlineEditValue, setInlineEditValue] = useState("");
@@ -170,6 +172,22 @@ export function FolderSidebar({
             >
               <VersionFolderSortIcon />
             </button>
+            {onSheetsImport && (
+              <button
+                type="button"
+                aria-label="Google Sheets에서 가져오기"
+                title="Google Sheets에서 가져오기"
+                disabled={folderBusy}
+                onClick={onSheetsImport}
+                style={{ border: "none", background: "transparent", cursor: folderBusy ? "default" : "pointer", padding: "0 4px", lineHeight: 1, color: "#6b7280", display: "flex", alignItems: "center" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <polyline points="12 12 12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <polyline points="8 17 12 21 16 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
