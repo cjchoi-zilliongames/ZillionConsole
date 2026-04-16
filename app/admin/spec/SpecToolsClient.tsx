@@ -631,11 +631,16 @@ export function SpecToolsClient() {
 
       {sheetsImportOpen && (
         <SheetsImportModal
+          service={service}
+          folders={folders}
+          folderNames={folderNames}
+          setFolderNames={folderState.setFolderNames}
+          liveFolder={liveFolder}
+          refreshInventory={refreshInventory}
+          publishFolderRoutes={service.publishFolderRoutes}
           onClose={() => setSheetsImportOpen(false)}
-          onDone={() => {
-            setSheetsImportBusy(false);
-            void refreshInventory({ soft: true });
-            showBulkToast("Google Sheets 가져오기 완료");
+          onDone={({ count, folderName }) => {
+            showBulkToast(`Google Sheets 가져오기 완료: ${count}개 → ${folderName}`);
           }}
           onBusyChange={(busy) => setSheetsImportBusy(busy)}
         />

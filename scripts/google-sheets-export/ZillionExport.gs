@@ -6,7 +6,7 @@ function shouldExclude(name) {
 }
 
 function doGet() {
-  return ContentService.createTextOutput("질리언 콘솔 Sheets 내보내기 API — POST 전용")
+  return ContentService.createTextOutput("질리언 콘솔 Sheets API — POST 전용")
     .setMimeType(ContentService.MimeType.TEXT);
 }
 
@@ -40,13 +40,6 @@ function doPost(e) {
     }
 
     if (action === "export") {
-      var props = PropertiesService.getScriptProperties();
-      var consoleUrl = props.getProperty("CONSOLE_URL");
-      var importKey = props.getProperty("IMPORT_KEY");
-      if (!consoleUrl || !importKey) {
-        return err("스크립트 속성에 CONSOLE_URL과 IMPORT_KEY를 설정하세요.");
-      }
-
       var ss = SpreadsheetApp.openById(body.spreadsheetId);
       var sheetNames = body.sheetNames;
       var csvFiles = [];
@@ -76,20 +69,7 @@ function doPost(e) {
         csvFiles.push({ name: sheetNames[i] + ".csv", content: csv });
       }
 
-      var url = consoleUrl.replace(/\/+$/, "") + "/api/storage/sheets-receive";
-      var response = UrlFetchApp.fetch(url, {
-        method: "post",
-        contentType: "application/json",
-        headers: { "x-import-key": importKey },
-        payload: JSON.stringify({ folderName: body.folderName, csvFiles: csvFiles }),
-        muteHttpExceptions: true,
-      });
-
-      var code = response.getResponseCode();
-      var res = JSON.parse(response.getContentText());
-      if (code !== 200 || !res.ok) return err(res.error || "HTTP " + code);
-
-      return ok({ folderPath: res.folderPath, count: res.uploaded.length });
+      return ok({ csvFiles: csvFiles });
     }
 
     return err("unknown action");
