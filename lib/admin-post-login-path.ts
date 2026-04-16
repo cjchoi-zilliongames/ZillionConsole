@@ -32,3 +32,4 @@ export function resolvePostLoginAdminPath(nextParam: string | null): string {
   if (t.includes("//") || t.includes("..")) return "/admin";
   return t;
 } 
+ 
