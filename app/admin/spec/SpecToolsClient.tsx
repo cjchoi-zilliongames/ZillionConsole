@@ -108,6 +108,7 @@ export function SpecToolsClient() {
   const [searchQuery, setSearchQuery] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [sheetsImportOpen, setSheetsImportOpen] = useState(false);
+  const [sheetsImportBusy, setSheetsImportBusy] = useState<boolean | "loading">(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteModalFiles, setDeleteModalFiles] = useState<InventoryFile[]>([]);
   const [moveModalFiles, setMoveModalFiles] = useState<InventoryFile[]>([]);
@@ -443,11 +444,15 @@ export function SpecToolsClient() {
     <>
       <AdminGlobalLoadingOverlay
         message={
-          folderOps.folderBusy && !folderOps.deleteFolderTarget
-            ? ADMIN_FOLDER_BUSY_MESSAGE
-            : loadingInv
-              ? ADMIN_DATA_LOADING_MESSAGE
-              : null
+          sheetsImportBusy === "loading"
+            ? "데이터 로드 중…"
+            : sheetsImportBusy === true
+            ? "처리 중…"
+            : folderOps.folderBusy && !folderOps.deleteFolderTarget
+              ? ADMIN_FOLDER_BUSY_MESSAGE
+              : loadingInv
+                ? ADMIN_DATA_LOADING_MESSAGE
+                : null
         }
       />
       <style>{`@keyframes _spin{to{transform:rotate(360deg)}}`}</style>
@@ -628,9 +633,11 @@ export function SpecToolsClient() {
         <SheetsImportModal
           onClose={() => setSheetsImportOpen(false)}
           onDone={() => {
+            setSheetsImportBusy(false);
             void refreshInventory({ soft: true });
             showBulkToast("Google Sheets 가져오기 완료");
           }}
+          onBusyChange={(busy) => setSheetsImportBusy(busy)}
         />
       )}
 

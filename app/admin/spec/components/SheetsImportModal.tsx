@@ -9,6 +9,7 @@ type Step = "list" | "tabs" | "folder" | "importing" | "done";
 type SheetsImportModalProps = {
   onClose: () => void;
   onDone: () => void;
+  onBusyChange?: (busy: boolean | "loading") => void;
 };
 
 import { storageAuthFetch } from "@/lib/storage-auth-fetch";
@@ -31,7 +32,7 @@ function formatDate(iso: string) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function SheetsImportModal({ onClose, onDone }: SheetsImportModalProps) {
+export function SheetsImportModal({ onClose, onDone, onBusyChange }: SheetsImportModalProps) {
   const [step, setStep] = useState<Step>("list");
 
   // list
@@ -60,6 +61,7 @@ export function SheetsImportModal({ onClose, onDone }: SheetsImportModalProps) {
   // ── Load spreadsheets on mount ──────────────────────────────
   useEffect(() => {
     if (!HAS_SCRIPT) { setFilesLoading(false); return; }
+    onBusyChange?.("loading");
     void (async () => {
       try {
         const res = await callScript({ action: "list-spreadsheets" });
@@ -69,6 +71,7 @@ export function SheetsImportModal({ onClose, onDone }: SheetsImportModalProps) {
         setFilesError("네트워크 오류");
       } finally {
         setFilesLoading(false);
+        onBusyChange?.(false);
       }
     })();
   }, []);
@@ -125,6 +128,8 @@ export function SheetsImportModal({ onClose, onDone }: SheetsImportModalProps) {
     setImportError(null);
     setStep("importing");
     setImportPhase("내보내기 중…");
+    onBusyChange?.(true);
+    onClose();
     try {
       const res = await callScript({
         action: "export",
@@ -133,12 +138,10 @@ export function SheetsImportModal({ onClose, onDone }: SheetsImportModalProps) {
         folderName: name,
       });
       if (!res.ok) throw new Error(res.error ?? "내보내기 실패");
-      setImportPhase("완료!");
-      setStep("done");
-      await new Promise((r) => setTimeout(r, 600));
+      onBusyChange?.(false);
       onDone();
-      onClose();
     } catch (e) {
+      onBusyChange?.(false);
       setImportError(e instanceof Error ? e.message : "내보내기 실패");
       setImportPhase("");
       setStep("folder");
@@ -254,7 +257,7 @@ function Overlay({ onClose, children }: { onClose: () => void; children: React.R
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 110, padding: 16, backdropFilter: "blur(2px)" }} onClick={onClose}>
       <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
-        style={{ background: "#fff", borderRadius: 18, boxShadow: "0 24px 64px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.04)", width: "100%", maxWidth: 500, padding: "26px 26px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
+        style={{ background: "#fff", borderRadius: 18, boxShadow: "0 24px 64px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.04)", width: 500, height: 520, padding: "26px 26px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
         {children}
       </div>
     </div>
